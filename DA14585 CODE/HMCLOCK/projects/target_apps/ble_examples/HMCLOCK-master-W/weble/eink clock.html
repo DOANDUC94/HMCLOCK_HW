@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>DA14585 BLE - Bộ Điều Khiển Đồng Hồ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <style>
+        :root {
+            --primary: #0078d7;
+            --primary-hover: #005a9e;
+            --success: #28a745;
+            --danger: #dc3545;
+            --warning: #ffc107;
+            --bg-body: #f4f6f9;
+            --bg-card: #ffffff;
+            --text-main: #333333;
+            --border-color: #e0e0e0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: var(--bg-body);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+            box-sizing: border-box;
+            padding: 20px;
+        }
+        h2 {
+            margin: 20px 0 10px 0;
+            font-size: 1.6rem;
+            color: var(--primary);
+            font-weight: 600;
+        }
+        .card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+            margin-bottom: 20px;
+            border: 1px solid rgba(0,0,0,0.03);
+        }
+        #sysTime {
+            font-size: 1.8rem;
+            margin: 10px 0 20px 0;
+            color: var(--primary);
+            font-weight: bold;
+            font-family: monospace;
+            background: rgba(0, 120, 215, 0.08);
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 40px;
+            padding: 0 16px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            border-radius: 8px;
+            border: none;
+            background: var(--primary);
+            color: #fff;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        button:disabled {
+            background: #ccc !important;
+            color: #f5f5f5 !important;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        #connect { background: var(--success); font-weight: bold; }
+        #disconnect { background: var(--danger); }
+        #refresh { background: #6c757d; }
+        #sendTime { background: #fd7e14; font-weight: bold;}
+        #sendCustom92 { background: var(--primary); font-weight: bold; width: 100%; }
+
+        .hint-text {
+            font-size: 0.8rem;
+            color: #777;
+            margin-top: -4px;
+            text-align: left;
+            padding-left: 4px;
+        }
+        .log-header {
+            text-align: left;
+            font-size: 0.9rem;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .clear-log-btn {
+            background: none;
+            color: var(--danger);
+            border: none;
+            padding: 0;
+            height: auto;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .clear-log-btn:active { transform: none; }
+        pre#log {
+            width: 100%;
+            margin: 0 auto;
+            background: #1e1e1e;
+            color: #39ff14;
+            font-size: 0.85rem;
+            border-radius: 12px;
+            padding: 14px;
+            min-height: 150px;
+            max-height: 250px;
+            text-align: left;
+            overflow-y: auto;
+            box-sizing: border-box;
+            font-family: "Courier New", Courier, monospace;
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Đồng Bộ Đồng Hồ BLE</h2>
+        <div id="sysTime">--:--:--</div>
+
+        <div class="card">
+            <div class="btn-group">
+                <button id="connect">Kết Nối Thiết Bị</button>
+                <button id="sendTime" disabled>Gửi Thời Gian Hiện Tại</button>
+                
+                <button id="sendCustom92" disabled>Đổi Chế Chế Độ (Đang: 0)</button>
+                <div class="hint-text" id="modeHint">
+                    * Hiện tại: Chế độ 0 (Thời gian) -> Nhấn để chuyển sang Lịch
+                </div>
+
+                <hr style="width:100%; border:0; border-top:1px solid var(--border-color); margin:8px 0;">
+                <button id="refresh" disabled>Làm Mới Màn Hình</button>
+                <button id="disconnect" disabled>Ngắt Kết Nối</button> 
+            </div>
+        </div>
+
+        <div class="log-header">
+            <span>NHẬT KÝ HỆ THỐNG (LOG)</span>
+            <button class="clear-log-btn" onclick="clearLog()">Xóa nhật ký</button>
+        </div>
+        <pre id="log"></pre>
+    </div>
+
+    <script>
+        const SERVICE_UUID = '18424398-7cbc-11e9-8f9e-2a86e4085a59';
+        const CHARACTERISTIC_UUID = '772ae377-b3d2-4f8e-4042-5481d1e0098c';
+        let device, server, service, characteristic;
+        
+        // Quản lý trạng thái vòng lặp chế độ (0, 1, 2)
+        let currentMode = 0; 
+        const modeNames = ["Thời gian", "Lịch", "Đếm ngược"];
+
+        const log = msg => {
+            const logElem = document.getElementById('log');
+            logElem.textContent += msg + '\n';
+            logElem.scrollTop = logElem.scrollHeight;
+        };
+        
+        const clearLog = () => document.getElementById('log').textContent = '';
+
+        document.getElementById('connect').onclick = async () => {
+            clearLog();
+            try {
+                log('⏳ Đang tìm kiếm thiết bị Bluetooth...');
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: "DLG-" }],
+                    optionalServices: [SERVICE_UUID, 'generic_access', 'generic_attribute']
+                });
+                
+                log(`✅ Đã tìm thấy: ${device.name || 'Thiết bị ẩn danh'}`);
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                log('⏳ Đang kết nối tới máy chủ GATT Server...');
+                server = await device.gatt.connect();
+                log('🎉 Kết nối thành công tới GATT Server!');
+                
+                try {
+                    log(`⏳ Đang tìm kiếm Service: ${SERVICE_UUID}`);
+                    service = await server.getPrimaryService(SERVICE_UUID);
+                    log('✅ Đã lấy thành công Service!');
+                    
+                    try {
+                        log(`⏳ Đang lấy Đặc tính (Characteristic): ${CHARACTERISTIC_UUID}`);
+                        characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                        log('✅ Đã lấy thành công Characteristic!');
+                        
+                        // Mở khóa các nút điều khiển
+                        document.getElementById('sendTime').disabled = false;
+                        document.getElementById('refresh').disabled = false;
+                        document.getElementById('disconnect').disabled = false;
+                        document.getElementById('sendCustom92').disabled = false;
+                        log('🚀 Thiết bị đã SẴN SÀNG để cấu hình!');
+                        
+                        if (characteristic.properties.notify) {
+                            try {
+                                await characteristic.startNotifications();
+                                characteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+                                log('🔔 Đã kích hoạt chức năng nhận thông báo từ mạch.');
+                            } catch (notifyError) {
+                                log(`⚠️ Không kích hoạt được thông báo độc lập: ${notifyError}`);
+                            }
+                        }
+                    } catch (charError) {
+                        log(`❌ Lỗi lấy đặc tính: ${charError}`);
+                        await discoverAllCharacteristics(service);
+                    }
+                } catch (serviceError) {
+                    log(`❌ Không tìm thấy Service được định nghĩa: ${serviceError}`);
+                    await discoverAllServices(server);
+                }
+            } catch (e) {
+                log(`❌ Quá trình kết nối thất bại: ${e}`);
+            }
+        };
+
+        document.getElementById('disconnect').onclick = () => {
+            if (device && device.gatt.connected) {
+                device.gatt.disconnect();
+                log('🔌 Đã chủ động ngắt kết nối thiết bị.');
+            } else {
+                log('⚠️ Thiết bị chưa được kết nối trước đó.');
+            }
+            disableAllButtons();
+        };
+
+        function onDisconnected (event) {
+            const dev = event.target;
+            log(`❌ Thiết bị [${dev.name || 'Mạch BLE'}] đã mất kết nối đột ngột.`);
+            disableAllButtons();
+        }
+
+        function disableAllButtons() {
+            document.getElementById('sendTime').disabled = true;
+            document.getElementById('refresh').disabled = true;
+            document.getElementById('disconnect').disabled = true;
+            document.getElementById('sendCustom92').disabled = true;
+        }
+
+        function handleCharacteristicValueChanged (event) {
+            const value = event.target.value;
+            log(`📥 Nhận dữ liệu phản hồi từ mạch (Hex): ${Array.from(new Uint8Array(value.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+        }
+
+        async function discoverAllServices (server) {
+            try {
+                const services = await server.getPrimaryServices();
+                for (const s of services) {
+                    await discoverAllCharacteristics(s);
+                }
+            } catch (e) {
+                log(`❌ Quá trình quét rộng thất bại: ${e}`);
+            }
+        }
+
+        async function discoverAllCharacteristics (service) {
+            try {
+                const characteristics = await service.getCharacteristics();
+                for (const char of characteristics) {
+                    if (char.uuid.toLowerCase() === CHARACTERISTIC_UUID.toLowerCase() && !characteristic) {
+                        characteristic = char;
+                        document.getElementById('sendTime').disabled = false;
+                        document.getElementById('refresh').disabled = false;
+                        document.getElementById('sendCustom92').disabled = false;
+                        log('   ✅ Đã tìm thấy chính xác đặc tính tương thích!');
+                    }
+                }
+            } catch (e) {
+                log(`   ❌ Lỗi quét sâu các đặc tính: ${e}`);
+            }
+        }
+
+        // Bấm nút gửi thời gian thực
+        document.getElementById('sendTime').onclick = async () => {
+            if (!characteristic) { log('⚠️ Vui lòng kết nối Bluetooth trước.'); return; }
+            const now = new Date();
+            await sendDateTime(now);
+        };
+
+        // Lệnh gửi Refresh E2
+        document.getElementById('refresh').onclick = async () => {
+            if (!characteristic) { log('⚠️ Vui lòng kết nối Bluetooth trước.'); return; }
+            const buffer = new Uint8Array([0xE2]);
+            log('📤 Gửi mã lệnh làm mới màn hình: 0xE2');
+            try {
+                await sendRawBuffer(buffer);
+                log('✅ Gửi lệnh làm mới thành công.');
+            } catch (e) {
+                log('❌ Gửi lệnh làm mới thất bại: ' + e);
+            }
+        };
+
+        // Xử lý TỰ ĐỘNG XOAY VÒNG CHẾ ĐỘ khi nhấn nút (0 -> 1 -> 2 -> 0)
+        document.getElementById('sendCustom92').onclick = async () => {
+            if (!characteristic) { log('⚠️ Vui lòng kết nối Bluetooth trước.'); return; }
+            
+            // Tăng mode lên và quay vòng (0, 1, 2)
+            currentMode = (currentMode + 1) % 6;
+            
+            // Đóng gói data 3 bytes: [0x92, MSB, LSB]
+            const buffer = new Uint8Array([0x92, (currentMode >> 8) & 0xFF, currentMode & 0xFF]);
+            log(`📤 Gửi lệnh chuyển sang Chế độ ${currentMode} (${modeNames[currentMode]}) | Hex: ` + buffer.map(b => b.toString(16).padStart(2, '0')).join(' '));
+            
+            try {
+                await sendRawBuffer(buffer);
+                log(`✅ Đã chuyển đổi sang chế độ thành công.`);
+                
+                // Cập nhật giao diện text nút bấm trực quan
+                const nextMode = (currentMode + 1) % 3;
+                document.getElementById('sendCustom92').textContent = `Đổi Chế Độ (Đang: ${currentMode})`;
+                document.getElementById('modeHint').textContent = `* Hiện tại: Chế độ ${currentMode} (${modeNames[currentMode]}) -> Nhấn tiếp để chuyển sang ${modeNames[nextMode]}`;
+            } catch (e) {
+                log('❌ Chuyển chế độ thất bại: ' + e);
+                // Trả lại trạng thái cũ nếu lỗi
+                currentMode = (currentMode - 1 + 3) % 3;
+            }
+        };
+
+        function updateSysTime () {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = (now.getMonth() + 1).toString().padStart(2, '0');
+            const d = now.getDate().toString().padStart(2, '0');
+            const h = now.getHours().toString().padStart(2, '0');
+            const min = now.getMinutes().toString().padStart(2, '0');
+            const s = now.getSeconds().toString().padStart(2, '0');
+            document.getElementById('sysTime').textContent = `${y}-${m}-${d} ${h}:${min}:${s}`;
+        }
+        setInterval(updateSysTime, 1000);
+        updateSysTime();
+
+        function getLunarInfo (date) {
+            const lunarData = {
+                2023: { year: 2023, leapMonth: 0, monthDays: [29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30] },
+                2024: { year: 2024, leapMonth: 2, monthDays: [29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29] },
+                2025: { year: 2025, leapMonth: 6, monthDays: [29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29] },
+                2026: { year: 2026, leapMonth: 0, monthDays: [30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29] },
+                2027: { year: 2027, leapMonth: 0, monthDays: [29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30] },
+                2028: { year: 2028, leapMonth: 5, monthDays: [30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30] }
+            };
+            function solarToLunar (solarDate) {
+                const year = solarDate.getFullYear();
+                const month = solarDate.getMonth() + 1;
+                const day = solarDate.getDate();
+                if (!lunarData[year]) { return { year: year, month: month, day: day }; }
+                const solarLunarMap = {
+                    2023: { 1: { 1: { m: 11, d: 22 } }, 2: { 1: { m: 12, d: 22 } }, 3: { 1: { m: 1, d: 22 } }, 4: { 1: { m: 2, d: 21 } }, 5: { 1: { m: 3, d: 22 } }, 6: { 1: { m: 4, d: 22 } }, 7: { 1: { m: 5, d: 23 } }, 8: { 1: { m: 6, d: 23 } }, 9: { 1: { m: 7, d: 24 } }, 10: { 1: { m: 8, d: 24 } }, 11: { 1: { m: 9, d: 25 } }, 12: { 1: { m: 10, d: 25 } } },
+                    2024: { 1: { 1: { m: 11, d: 26 } }, 2: { 1: { m: 12, d: 26 } }, 3: { 1: { m: 1, d: 27 } }, 4: { 1: { m: 2, d: 27 } }, 5: { 1: { m: 3, d: 28 } }, 6: { 1: { m: 4, d: 29 } }, 7: { 1: { m: 5, d: 30 } }, 8: { 1: { m: 6, d: 30 } }, 9: { 1: { m: 7, d: 30 } }, 10: { 1: { m: 8, d: 30 } }, 11: { 1: { m: 9, d: 30 } }, 12: { 1: { m: 10, d: 30 } } },
+                    2025: { 1: { 1: { m: 11, d: 30 } }, 2: { 1: { m: 12, d: 30 } }, 3: { 1: { m: 1, d: 30 } }, 4: { 1: { m: 2, d: 30 } }, 5: { 1: { m: 3, d: 30 } }, 6: { 1: { m: 4, d: 30 } }, 7: { 1: { m: 5, d: 30 } }, 8: { 1: { m: 6, d: 30 } }, 9: { 1: { m: 7, d: 30 } }, 10: { 1: { m: 8, d: 30 } }, 11: { 1: { m: 9, d: 30 } }, 12: { 1: { m: 10, d: 30 } } },
+                    2026: { 1: { 1: { m: 11, d: 30 }, 20: { m: 12, d: 20 } }, 2: { 1: { m: 12, d: 30 }, 20: { m: 1, d: 20 } }, 3: { 1: { m: 1, d: 30 }, 20: { m: 2, d: 20 } }, 4: { 1: { m: 2, d: 29 }, 20: { m: 3, d: 21 } }, 5: { 1: { m: 3, d: 30 }, 20: { m: 4, d: 21 } }, 6: { 1: { m: 4, d: 30 }, 20: { m: 5, d: 21 } }, 7: { 1: { m: 5, d: 30 }, 20: { m: 6, d: 21 } }, 8: { 1: { m: 6, d: 30 }, 20: { m: 7, d: 22 } }, 9: { 1: { m: 7, d: 29 }, 20: { m: 8, d: 22 } }, 10: { 1: { m: 8, d: 30 }, 20: { m: 9, d: 22 } }, 11: { 1: { m: 9, d: 30 }, 20: { m: 10, d: 22 } }, 12: { 1: { m: 10, d: 30 }, 20: { m: 11, d: 22 } } },
+                    2027: { 1: { 1: { m: 11, d: 30 } }, 2: { 1: { m: 12, d: 30 } }, 3: { 1: { m: 1, d: 29 } }, 4: { 1: { m: 2, d: 29 } }, 5: { 1: { m: 3, d: 30 } }, 6: { 1: { m: 4, d: 29 } }, 7: { 1: { m: 5, d: 30 } }, 8: { 1: { m: 6, d: 29 } }, 9: { 1: { m: 7, d: 30 } }, 10: { 1: { m: 8, d: 29 } }, 11: { 1: { m: 9, d: 30 } }, 12: { 1: { m: 10, d: 30 } } },
+                    2028: { 1: { 1: { m: 11, d: 30 } }, 2: { 1: { m: 12, d: 30 } }, 3: { 1: { m: 1, d: 30 } }, 4: { 1: { m: 2, d: 30 } }, 5: { 1: { m: 3, d: 30 } }, 6: { 1: { m: 4, d: 30 } }, 7: { 1: { m: 5, d: 30 } }, 8: { 1: { m: 6, d: 30 } }, 9: { 1: { m: 7, d: 30 } }, 10: { 1: { m: 8, d: 30 } }, 11: { 1: { m: 9, d: 30 } }, 12: { 1: { m: 10, d: 30 } } }
+                };
+                const yearMap = solarLunarMap[year];
+                if (!yearMap || !yearMap[month]) return { year: year, month: month, day: day };
+                const monthMap = yearMap[month];
+                let lunarMonth = 1, lunarDay = 1, lastDay = 0;
+                Object.keys(monthMap).forEach(key => {
+                    const mapDay = parseInt(key);
+                    if (mapDay <= day && mapDay > lastDay) {
+                        lastDay = mapDay;
+                        lunarMonth = monthMap[key].m;
+                        lunarDay = monthMap[key].d + (day - mapDay);
+                    }
+                });
+                const currentLunarData = lunarData[year];
+                if (lunarDay > currentLunarData.monthDays[lunarMonth - 1]) {
+                    lunarDay -= currentLunarData.monthDays[lunarMonth - 1];
+                    lunarMonth += 1;
+                }
+                return { year: year, month: lunarMonth, day: lunarDay };
+            }
+            const lunarDate = solarToLunar(date);
+            return { year: lunarDate.year, month: lunarDate.month, date: lunarDate.day };
+        }
+
+        // Đóng gói hoàn chỉnh hàm gửi thời gian 12 bytes
+        async function sendDateTime (date) {
+            if (!characteristic) { log('❌ Lỗi: Đặc tính BLE chưa được khởi tạo thành công.'); return; }
+            
+            const year = date.getFullYear();
+            const month = date.getMonth(); 
+            const day = date.getDate();
+            const hour = date.getHours();
+            const minute = date.getMinutes();
+            const second = date.getSeconds();
+            const weekday = date.getDay();
+            const lunarInfo = getLunarInfo(date);
+            
+            const buffer = new Uint8Array(12);
+            buffer[0] = 0x91;
+            buffer[1] = year & 0xFF;
+            buffer[2] = (year >> 8) & 0xFF;
+            buffer[3] = month;
+            buffer[4] = day;
+            buffer[5] = hour;
+            buffer[6] = minute;
+            buffer[7] = second;
+            buffer[8] = weekday;
+            buffer[9] = lunarInfo.year % 100;
+            buffer[10] = lunarInfo.month;
+            buffer[11] = lunarInfo.date;
+
+            const daysVi = ['Chủ Nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+            log(`\n📤 Đang gửi dữ liệu đồng bộ: ${year}-${(month+1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`);
+            log(` ℹ️ Lịch: ${daysVi[weekday]} | Âm lịch: Năm ${lunarInfo.year} (Tháng ${lunarInfo.month}, Ngày ${lunarInfo.date})`);
+            log(' ℹ️ Gói dữ liệu Hex: ' + Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join(' '));
+            
+            try {
+                if (characteristic.properties.write) {
+                    await characteristic.writeValueWithResponse(buffer);
+                } else if (characteristic.properties.writeWithoutResponse) {
+                    await characteristic.writeValueWithoutResponse(buffer);
+                } else {
+                    await characteristic.writeValue(buffer);
+                }
+                log('✅ Đồng bộ thời gian thực thành công!');
+            } catch (error) {
+                log('❌ Lỗi gửi gói tin thời gian: ' + error);
+            }
+        }
+
+        // Hàm gửi dữ liệu thô (Raw)
+        async function sendRawBuffer(buffer) {
+            if (!characteristic) return;
+            if (characteristic.properties.write) {
+                await characteristic.writeValueWithResponse(buffer);
+            } else if (characteristic.properties.writeWithoutResponse) {
+                await characteristic.writeValueWithoutResponse(buffer);
+            } else {
+                await characteristic.writeValue(buffer);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,1755 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>BLE E-Ink Multi-Object Controller & OTA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <script src="fonts_data.js"></script>
+	 <script src="crc32.js"></script>
+    <style>
+        :root {
+            --primary: #0078d7;
+            --primary-hover: #005a9e;
+            --success: #28a745;
+            --danger: #dc3545;
+            --warning: #ffc107;
+            --bg-body: #f4f6f9;
+            --bg-card: #ffffff;
+            --text-main: #333333;
+            --border-color: #e0e0e0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            margin: 0; padding: 0;
+            background: var(--bg-body); color: var(--text-main);
+            display: flex; flex-direction: column; align-items: center;
+            padding-bottom: 60px; /* Tránh đè panel điều khiển */
+            box-sizing: border-box;
+        }
+        .container { width: 100%; max-width: 500px; box-sizing: border-box; padding: 10px; overflow-x: hidden; }
+        
+        .sticky-preview-panel {
+            position: sticky; top: 0; z-index: 1000;
+            background: var(--bg-body); width: 100%; max-width: 500px;
+            box-sizing: border-box; padding: 10px 15px;
+            border-bottom: 2px solid var(--primary);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .canvas-wrapper { text-align: center; margin: 5px 0; }
+        #canvas-container {
+            border: 2px dashed #666; background: #fff; display: inline-block;
+            padding: 4px; border-radius: 4px; max-width: 100%; box-sizing: border-box;
+        }
+        canvas { background: #fff; border: 1px solid #ddd; image-rendering: pixelated; display: block; margin: 0 auto; max-width: 100%; height: auto; }
+        
+        .tabs-container { display: flex; background: #e0e0e0; border-radius: 8px; padding: 3px; gap: 4px; margin-top: 5px; }
+        .tab-btn {
+            flex: 1; background: none; color: #555; border: none; height: 36px;
+            font-size: 0.9rem; font-weight: bold; border-radius: 6px; cursor: pointer; transition: all 0.2s;
+        }
+        .tab-btn.active { background: var(--bg-card); color: var(--primary); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .card {
+            background: var(--bg-card); border-radius: 12px; padding: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); margin-bottom: 12px;
+            border: 1px solid rgba(0,0,0,0.03); box-sizing: border-box;
+            max-width: 100%;
+        }
+        h3 { font-size: 0.95rem; margin: 0 0 10px 0; border-bottom: 2px solid var(--primary); padding-bottom: 3px; color: var(--primary); }
+
+        /* DANH SÁCH LAYER DẠNG ICON (MOBILE FRIENDLY) */
+        .objects-grid {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;
+        }
+        .object-icon-btn {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            width: 72px; height: 72px; border-radius: 10px; border: 2px solid #cbd5e1;
+            background: #fff; cursor: pointer; position: relative; font-size: 10px; font-weight: bold; color: #475569;
+            box-sizing: border-box;
+        }
+        .object-icon-btn.active { border-color: var(--primary); background: #e0f2fe; color: var(--primary); }
+        .object-icon-btn .badge-id { position: absolute; top: 3px; left: 5px; font-size: 9px; color: #94a3b8; }
+        .object-icon-btn .status-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
+        .object-icon-btn.hidden-layer .status-dot { background: var(--danger); }
+        .object-icon-btn .icon-sym { font-size: 20px; margin-bottom: 2px; }
+
+        /* LƯỚI CHỌN NHANH HÌNH ẢNH MẪU */
+        .img-thumb-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+            gap: 6px;
+            margin: 4px 0 8px 0;
+            max-height: 100px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 6px;
+            border-radius: 4px;
+            background: #fafafa;
+        }
+        .img-thumb-item {
+            aspect-ratio: 1;
+            border: 2px solid #cbd5e1;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2px;
+            box-sizing: border-box;
+        }
+        .img-thumb-item:hover { border-color: var(--primary); }
+        .img-thumb-item.selected { border-color: var(--primary); background: #e0f2fe; }
+        .img-thumb-item img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            image-rendering: pixelated;
+        }
+
+        /* PANEL ĐIỀU KHIỂN CHUNG TỰ ĐỘNG XUỐNG DÒNG TRÊN MOBILE HẸP */
+        .control-panel-box { 
+            display: flex; 
+            flex-direction: row; 
+            flex-wrap: wrap; 
+            gap: 12px; 
+            background: #e2e8f0; 
+            padding: 10px; 
+            border-radius: 12px; 
+            box-sizing: border-box;
+        }
+        .joystick-grid { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            grid-template-rows: repeat(3, 1fr); 
+            gap: 4px; 
+            width: 130px; 
+            height: 130px; 
+            margin: 0 auto; 
+            flex-shrink: 0;
+        }
+        .joy-btn {
+            background: #fff; border: 1px solid #cbd5e1; border-radius: 8px;
+            font-size: 18px; font-weight: bold; display: flex; align-items: center; justify-content: center; cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); user-select: none;
+        }
+        .joy-btn:active { background: #cbd5e1; }
+        .joy-center { background: none; border: none; box-shadow: none; font-size: 11px; color: #64748b; text-align: center; line-height: 1.2; }
+        
+        .props-form { 
+            flex: 1; 
+            min-width: 200px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 6px; 
+            justify-content: center; 
+            box-sizing: border-box;
+        }
+        .form-row { display: flex; gap: 6px; width: 100%; box-sizing: border-box; }
+        .form-group { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .form-group label { font-weight: bold; margin-bottom: 2px; font-size: 11px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .form-group input, .form-group select { 
+            height: 32px; 
+            padding: 4px 6px; 
+            box-sizing: border-box; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            width: 100%;
+            max-width: 100%;
+        }
+    .form-group input[type="range"] {
+            height: 36px;
+            margin: 4px 0;
+            cursor: pointer;
+            width: 100%;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+        }
+
+        /* Nền thanh trượt (Track) */
+        .form-group input[type="range"]::-webkit-slider-runnable-track {
+            height: 10px;
+            background: #cbd5e1;
+            border-radius: 5px;
+            width: 100%;
+        }
+        .form-group input[type="range"]::-moz-range-track {
+            height: 10px;
+            background: #cbd5e1;
+            border-radius: 5px;
+            width: 100%;
+        }
+
+        /* Nút kéo (Thumb) - To dễ vuốt trên mobile */
+        .form-group input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--primary);
+            margin-top: -7px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .form-group input[type="range"]::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--primary);
+            border: none;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        /* Thanh thêm đối tượng nhanh */
+        .add-object-bar { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+        .add-btn { flex: 1; min-width: 65px; height: 34px; font-weight: bold; border-radius: 6px; border: none; cursor: pointer; color: white; font-size: 11px; box-sizing: border-box; text-align: center; padding: 0 2px; }
+        .add-txt { background: #0ea5e9; } .add-line { background: #f59e0b; } .add-bmp { background: #8b5cf6; }
+
+        #sysTime { font-size: 1.1rem; margin: 0 0 10px 0; color: var(--primary); font-weight: bold; font-family: monospace; background: rgba(0, 120, 215, 0.08); padding: 6px; border-radius: 6px; text-align: center; }
+        .btn-group { display: flex; flex-direction: column; gap: 8px; }
+        button.action-btn { display: inline-flex; align-items: center; justify-content: center; height: 38px; font-size: 0.9rem; font-weight: 500; border-radius: 6px; border: none; background: var(--primary); color: #fff; cursor: pointer; width: 100%; box-sizing: border-box; }
+        button.action-btn:disabled { background: #ccc !important; cursor: not-allowed; }
+        #connect { background: var(--success); font-weight: bold; }
+        #sendLayout { background: #8b5cf6; font-weight: bold; }
+        #disconnect { background: var(--danger); }
+        #sendTime { background: #fd7e14; font-weight: bold;}
+
+        pre#log { width: 100%; background: #1e1e1e; color: #39ff14; font-size: 0.75rem; border-radius: 8px; padding: 8px; max-height: 120px; text-align: left; overflow-x: auto; overflow-y: auto; box-sizing: border-box; font-family: monospace; white-space: pre-wrap; word-break: break-all; }
+        .clear-log-btn { background: none; color: var(--danger); border: none; cursor: pointer; font-size: 0.8rem;}
+
+        /* Style cho phần Quản lý Thư viện Ảnh Base64 */
+        .manager-row { display: flex; gap: 4px; margin-top: 4px; width: 100%; box-sizing: border-box; }
+        .manager-row input { flex: 1; height: 28px; font-size: 11px; padding: 0 4px; border: 1px solid #ccc; border-radius: 4px; min-width: 0; }
+        .manager-row button { height: 28px; font-size: 11px; background: var(--primary); color: white; border: none; padding: 0 8px; border-radius: 4px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
+        .icon-tags-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .icon-tag { font-size: 10px; background: #e2e8f0; color: #334155; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+        .icon-tag .del-tag { color: var(--danger); cursor: pointer; font-weight: bold; margin-left: 2px; }
+
+        /* === GIAO DIỆN TIẾN TRÌNH OTA MỚI (ĐẸP & CHUYÊN NGHIỆP) === */
+        #progress-container {
+            margin-top: 15px;
+            padding: 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        #progress-container.hidden {
+            display: none !important;
+        }
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .progress-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #475569;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        /* Icon xoay khi đang nạp */
+        .spinner-icon {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #cbd5e1;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        /* Thanh nền */
+        .progress-track {
+            height: 10px;
+            background-color: #e2e8f0;
+            border-radius: 9999px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+        }
+        /* Thanh chạy có hiệu ứng chuyển màu và sọc động */
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6);
+            background-size: 1rem 1rem;
+            background-image: linear-gradient(
+                45deg,
+                rgba(255, 255, 255, 0.15) 25%,
+                transparent 25%,
+                transparent 50%,
+                rgba(255, 255, 255, 0.15) 50%,
+                rgba(255, 255, 255, 0.15) 75%,
+                transparent 75%,
+                transparent
+            );
+            animation: progress-bar-stripes 1s linear infinite;
+            border-radius: 9999px;
+            transition: width 0.2s ease-out, background 0.3s ease;
+        }
+        @keyframes progress-bar-stripes {
+            from { background-position: 1rem 0; }
+            to { background-position: 0 0; }
+        }
+        /* Đổi màu khi hoàn tất */
+        .progress-bar-fill.success {
+            background: #10b981 !important;
+            animation: none;
+        }
+        /* Đổi màu khi lỗi */
+        .progress-bar-fill.error {
+            background: #ef4444 !important;
+            animation: none;
+        }
+        #update_progress_text {
+            font-size: 12px;
+            font-weight: bold;
+            color: #3b82f6;
+        }
+        #update_progress {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 6px;
+            font-family: monospace;
+        }
+		/* Màu sắc & Style chuẩn cho các nút mũi tên joystick */
+.joy-btn {
+    color: #0078d7 !important; /* Dùng màu xanh primary cho nổi bật */
+    font-size: 14px;
+    font-weight: bold;
+}
+.joy-btn:active {
+    background: #0078d7 !important;
+    color: #ffffff !important;
+}
+
+.btn-font-step {
+    width: 34px;
+    height: 34px;
+    background: #eef3f8;               /* Nền xám xanh nhẹ để tách biệt khỏi nền trắng */
+    border: 1px solid #b0c4de;         /* Viền màu steel blue nhẹ */
+    color: #0056b3;                    /* Mũi tên màu xanh thẫm đậm */
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: bold;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08); /* Đổ bóng tạo khối nhẹ */
+    transition: all 0.15s ease-in-out;
+}
+
+/* Hiệu ứng khi di chuột vào (Hover) */
+.btn-font-step:hover {
+    background: #0078d7;               /* Đổi hẳn sang nền xanh mướt */
+    color: #ffffff;                    /* Mũi tên thành màu trắng nổi bật */
+    border-color: #005a9e;
+}
+
+/* Hiệu ứng khi chọc/bấm giữ (Active) */
+.btn-font-step:active {
+    background: #005a9e;
+    transform: scale(0.95);            /* Nhún nhẹ xuống khi bấm */
+    box-shadow: none;
+}
+    </style>
+</head>
+<body>
+
+    <div class="sticky-preview-panel">
+        <div class="canvas-wrapper">
+            <div id="canvas-container">
+                <canvas id="epd_canvas"></canvas>
+            </div>
+        </div>
+        <div class="tabs-container">
+            <button class="tab-btn" onclick="switchTab('tab-simulation')">ĐỐI TƯỢNG</button>
+            <button class="tab-btn active" onclick="switchTab('tab-control')">KẾT NỒI MẠCH</button>
+            <button class="tab-btn" onclick="switchTab('tab-ota')">CẬP NHẬT</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="tab-simulation" class="tab-content">
+            <!-- THANH THÊM NHANH -->
+            <div class="add-object-bar">
+                <button class="add-btn add-txt" onclick="addObject('text')">+ Chữ</button>
+                <button class="add-btn add-line" onclick="addObject('line')">+ Đường</button>
+                <button class="add-btn add-bmp" onclick="addObject('bitmap')">+ Ảnh</button>
+                <button class="add-btn" style="background: #10b981;" onclick="addObject('battery')">+ Pin</button>
+				<button class="add-btn" style="background: #ec4899;" onclick="addObject('calendar')">+ Lịch</button>
+				<button class="add-btn" style="background: #78350f;" onclick="addObject('box')">+ Hộp</button>
+            </div>
+
+            <!-- GRID CHỨA CÁC ICON ĐỐI TƯỢNG -->
+            <div class="objects-grid" id="objects_icon_grid"></div>
+
+            <!-- PANEL ĐIỀU KHIỂN CHUNG CHO ĐỐI TƯỢNG ĐƯỢC CHỌN -->
+            <div class="card" id="global_control_card" style="display:none; padding: 10px;">
+                <h3 style="margin-bottom:8px; display:flex; justify-content:space-between; align-items: center;">
+                    <span id="ctrl_title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;">DỰ PHÒNG</span>
+                    <div style="flex-shrink: 0;">
+                        <button class="layer-btn" id="ctrl_toggle_btn" onclick="toggleActiveLayer()" style="background:#64748b; color:white; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;">Ẩn</button>
+                        <button class="layer-btn" onclick="deleteActiveLayer()" style="background:var(--danger); color:white; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer; margin-left:4px;">Xóa</button>
+                    </div>
+                </h3>
+                
+                <!-- PANEL ĐIỀU KHIỂN CHUNG -->
+                <div class="control-panel-box">
+                    <!-- JOYSTICK DI CHUYỂN TỌA ĐỘ -->
+                    <div class="joystick-grid">
+                        <div></div>
+                        <div class="joy-btn">▲</div>
+                        <div></div>
+                        <div class="joy-btn">◄</div>
+                        <div class="joy-btn joy-center" id="joy_coord">X:0<br>Y:0</div>
+                        <div class="joy-btn">►</div>
+                        <div></div>
+                        <div class="joy-btn">▼</div>
+                        <div></div>
+                    </div>
+
+                    <!-- THUỘC TÍNH CHI TIẾT TÙY BIẾN THEO TYPE -->
+                    <div class="props-form" id="dynamic_props_form"></div>
+                </div>
+            </div>
+
+            <!-- ĐỐI TƯỢNG LƯU / TẢI SLOT TRÌNH DUYỆT ĐÃ ĐƯỢC CHUYỂN VỀ TAB ĐỐI TƯỢNG -->
+            <div class="card" style="margin-top: 12px; padding: 8px; background: #f8fafc; border: 1px solid #cbd5e1;">
+                <div class="form-group" style="margin-bottom: 8px;">
+                    <label style="font-weight: bold; color: #334155;">Vị trí lưu (Slot):</label>
+                    <select id="slot_select" style="font-weight: bold; color: var(--primary);">
+                        <option value="1">Slot 1</option>
+                        <option value="2">Slot 2</option>
+                        <option value="3">Slot 3</option>
+                        <option value="4">Slot 4</option>
+                        <option value="5">Slot 5</option>
+                    </select>
+                </div>
+                <div class="form-row" style="gap: 8px;">
+                    <button onclick="saveLayoutToBrowser()" style="flex: 1; height: 36px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px;">💾 Lưu Slot (Web)</button>
+                    <button onclick="loadLayoutFromBrowser()" style="flex: 1; height: 36px; background: #0ea5e9; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px;">📂 Đọc Slot (Web)</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-control" class="tab-content active">
+            <div class="card">
+                <h3>BỘ ĐIỀU KHIỂN MẠCH</h3>
+                <div id="sysTime">--:--:--</div>
+                <div class="btn-group">
+                    <button id="connect" class="action-btn">Kết Nối</button>
+                    <button id="sendLayout" class="action-btn" disabled>Hiển thị lên thiết bị</button>
+                    <button id="sendTime" class="action-btn" disabled>Gửi Thời Gian Hiện Tại</button>                 
+                    <button id="refresh" class="action-btn" disabled>Làm Mới Màn Hình</button>
+					<button id="sendSave99" class="action-btn" disabled>Lưu giao diện</button>
+					<button id="swreset" class="action-btn" disabled>Khởi động lại</button> 
+                    <button id="disconnect" class="action-btn" disabled>Ngắt Kết Nối</button> 
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB OTA TÍCH HỢP -->
+        <div id="tab-ota" class="tab-content">
+            <div class="card">
+                <h3>CẬP NHẬT PHẦN MỀM</h3>
+                <button id="upfirm-button" class="action-btn" style="background: #e11d48; font-weight: bold;" onclick="onUpdate()">Bắt đầu nạp OTA</button>
+                
+                <!-- GIAO DIỆN TIẾN TRÌNH NÂNG CẤP ĐÃ ĐƯỢC LÀM ĐẸP -->
+                <div id="progress-container" class="hidden">
+                    <div class="progress-header">
+                        <span class="progress-title">
+                            <span class="spinner-icon" id="progress_spinner"></span> 
+                            Trạng thái nâng cấp
+                        </span>
+                        <span id="update_progress_text">0%</span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="update_progress_bar" class="progress-bar-fill"></div>
+                    </div>
+                    <div id="update_progress">Sẵn sàng tải...</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; width:100%; margin-top:5px; font-size:11px; font-weight:bold; color:#555; padding:0 4px; box-sizing: border-box;">
+            <span>NHẬT KÝ HỆ THỐNG</span>
+            <button class="clear-log-btn" onclick="clearLog()">Xóa</button>
+        </div>
+        <pre id="log"></pre>
+    </div>
+
+<script>
+      const MY_HARDCODED_ICONS = {
+        "icon1": "data:image/bmp;base64,Qk0OAwAAAAAAAD4AAAAoAAAANAAAAFoAAAABAAEAAAAAANACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD////////wAP////////AA////////8AD////////wAP////////AA////////8AD////////wAP////8///AA/////B//8AD////4H//wAP////Af//AA/////x//8AD/z///H//wAP+H//8P//AA/4f//w//8AD/g///D//wAP+D//8P//AA/4H//w//8AD/4f//D//wAP/x//8P//AA//j//w//8AD/+P//D//wAP/8/h8P//AA//58Aw//8AD//ngBD//wAP//eAMP//AA/+c44w//8AD/AbgBD//wAP4BuAGP//AA/Af8AY//8AD////hD//wAP////8P//AA//+H/w//8AD//wH/D//wAP/+AD8P//AA///gBg//8AD/4P8AAB/wAP/gf/AAH/AA/+B//wA/8AD/4P/////wAP/g//////AA/8H/////8AD/h//////wAP////////AA////////8AD////////wAP////////AA////////8AD////////wAP////////AA////////8AD////////wAP////////AA//+f////8AD//4///+DwAP//CP//gPAA//8MP/4A8AD/8w8P/APwAP/hD4/4B/AA/+EPx/Af8AD/4A/j4H/wAP/gD+PB//AA//AP8Yf/8AD/+AfwD//wAP/4B/g///AA//wD+H//8AD8HAH4///wAPgGAPB///AA8AAMYD//8AD/AA4MH//wAP/ADwwH//AA//AHnAP/8AD//AH8Qf/wAP//AHxh//AA//+AfHD/8AD//4b8AP/wAP//h/wA//AA//+H/AH/8AD/8A/8f//wAP/8Afw///AA//8A/D//8AD//4B4f//wAP//wPB///AA///g/f//8AD//+D////wAP//4f////AA///n////8AD////////wAP////////AA////////8AA=",
+        "icon2": "data:image/bmp;base64,Qk1WAQAAAAAAAD4AAAAoAAAAKwAAACMAAAABAAEAAAAAABgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////+AAAP////3/4AAA////+P/gAAD////wf+AAAP///+A/4AAA////wB/gAAD///+AD+AAAP///wAH4AAA///+AAPgAAD///wAAeAAAP//+AAA4AAA///4AADgAAD///AAAGAAAP//8AAAYAAA///gAAAgAAD//+AAACAAAP//8AAAYAAA///wAABgAAD/5/ACAOAAAP/D+AcA4AAA/4H+D4PgAAD/AP///+AAAP4Af///4AAA/AA////gAAD4AB///+AAAPAAH///4AAA4AAP///gAADgAA///+AAAOAAB///4AAA4AAH///gAADgAA///+AAAPAQD///4AAA+Dgf///gAAD//////+AAAP//////4AAA",
+		"icon3": "data:image/bmp;base64,Qk1GBAAAAAAAAD4AAAAoAAAAVAAAAFYAAAABAAEAAAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////////8AD/////////////8AD/////////////8AD///wAAAAAA///8AD//4AAAAAAAB//8AD//gAAAAAAAAf/8AD/+AAAAAAAAAH/8AD/4AAAAAAAAAB/8AD/wAAAAAAAAAA/8AD/gAAAAAAAAAAf8AD/AAAP////AAAP8AD+AA///////wAH8AD8AH///////+AD8AD8AP////////AD8AD4A/////////wB8AD4B/////////4B8ADwB/////////4A8ADwD/////////8A8ADgH/////////+AcADgH/////////+AcADgH/////////+AcADgP//////////AcADgP////gf////AcADAP///4AB////AMADAP///gAAf///AMADAP//+AAAH///AMADAP//8AAAD///AMADAP//wAAAA///AMADAP//gAAAAf//AMADAf//AAAAAP//gMADAf//AA/wAP//gMADAf/+AD/8AH//gMADAf/8AP//AD//gMADAf/8Af//gD//gMADAf/4A///wB//gMADAf/4B///4B//gMADAf/wB///4A//gMADAf/wD///8A//gMADAf/wD///8A//gMADAf/wH///+A//gMADAf/gH///+Af/gMADAf/gH///+Af/gMADAf/gH///+Af/gMADAf/gH///+Af/gMADAf/gH///+Af/gMADAf/gH///+Af/gMADAf/wH///+A//gMADAf/wD///8A//gMADAf/wD///8A//gMADAf/wD///4A//gMADAf/4B///4B//gMADAf/4A///wB//gMADAf/8Af//gD//gMADAf/8AP//AD//gMADAf/+AH/+AH//gMADAf//AA/wAP//gMADAf//AAAAAP//gMADAP//gAAAAf//AMADAP//wAAAA///AMADAP//8AAAD/v/AMADAP//+AAAH8D/AMADAP///gAAf4B/AMADAP///4AB/4A/AMADgP////gf/4A/AcADgP///////wA/AcADgH///////4A+AcADgH///////4A+AcADgH///////8B+AcADwD///////+D8A8ADwB/////////4A8AD4B/////////4B8AD4A/////////wB8AD8AP////////AD8AD8AH///////+AD8AD+AA///////wAH8AD/AAAP////AAAP8AD/gAAAAAAAAAAf8AD/wAAAAAAAAAA/8AD/4AAAAAAAAAB/8AD/+AAAAAAAAAH/8AD//gAAAAAAAAf/8AD//4AAAAAAAB//8AD///wAAAAAA///8AD/////////////8AD/////////////8AD/////////////8AA=",
+		"icon4": "data:image/bmp;base64,Qk0iBAAAAAAAAD4AAAAoAAAAVQAAAFMAAAABAAEAAAAAAOQDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////////+AD/////////////+AD/////////////+AD//////5//////+AD//////w//////+AD//////gf/////+AD/////+AH/////+AD/////8AD/////+AD/////4AB/////+AD/////wAA/////+AD/////AAAP////+AD////+AAAH////+AD////8AAAD////+AD////4AAAB////+AD////wAAAA////+AD////gAAAAf///+AD////AAAAAH///+AD///8AAAAAD///+AD///4AAAAAB///+AD///wAAAAAA///+AD///gAAAAAAf//+AD///AAAAAAAP//+AD//+AAAAAAAH//+AD//8AAAAAAAD//+AD//8AAAAAAAD//+AD//4AAAAAAAB//+AD//wAAAAAAAA//+AD//gAAAAAAAAf/+AD//AAAAAAAAAP/+AD/+AAAAAAAAAH/+AD/8AAAAAAAAAD/+AD/8AAAAAAAAAD/+AD/4AAAAAAAAAB/+AD/wAAAAAAAAAA/+AD/gAAAAAAAAAAf+AD/gAAAAAAAAAAf+AD/AAAAAAAAAAAP+AD/AAAAAAAAAAAP+AD+AAAAAAAAAAAH+AD8AAAAAAAAAAAD+AD8AAAAAAAAAAAD+AD4AAAAAAAAAAAB+AD4AAAAAAAAAAAB+ADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+ADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+AD4AAAAAAAAAAAB+AD8AAAAAAAAAAAD+AD8AAAAAGAAAAAD+AD+AAAAAPAAAAAH+AD/AAAAAfgAAAAP+AD/gAAAA/wAAAAf+AD/wAAAB/4AAAA/+AD/4AAAD/8AAAB/+AD/+AAAH/+AAAH/+AD//gAAf//gAAf/+AD//4AB///4AB//+AD///gf////gf//+AD/////////////+AD/////////////+AD/////////////+AD/////////////+AD/////////////+AA=",
+		"icon5": "data:image/bmp;base64,Qk1eBAAAAAAAAD4AAAAoAAAAWQAAAFgAAAABAAEAAAAAACAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////4D//////4D//////gAf/////4D//////AAP/////4D/////+AAH/////4D/////8AAD/////4D/////8AAD/////4D/////4AAD/////4D///8P4D4B/////4D///wD4D8B8B///4D///AAgH8AwAf//4D//+AAAH+AAAP//4D//8AAAH+AAAH//4D//4AAAH+AAAD//4D//4AAAP/AAAB//4D//wBwA//wAYB//4D//wD4D//4B8A//4D//wH8H//+D+A//4D//wP//////+A//4D//wH//////+A//4D//wH//////+A//4D//wD//////8A//4D//wD//////8B//4D//4B//////4B//4D//8A//////wD//4D//8A///P//wD//4D//4B//4B//wD//4D//4B//gAf/4B//4D/+AD//AAP/8AP/4D/8AH/+AAH/8AD/4D/4AH/8AAD/+AB/4D/wAP/4AAB/+AA/4D/gAP/wAwA//AA/4D/gA//wD8A//gAf4D/gP//gH+Af/+Af4D/gf//gP/Af//Af4D/Af//gP/Af//gP4D/Af//gf/gf//gP4D/Af//gP/Af//gP4D/gf//gP/Af//gP4D/gP//gH+Af//Af4D/gA//wD8A//4Af4D/gAP/wB4A//gAf4D/wAP/4AAB//AA/4D/4AH/8AAD/+AA/4D/8AH/8AAD/+AB/4D/+AD/+AAH/8AH/4D//wB//gAf/8Af/4D//4B//wA//4B//4D//8A//8D//wD//4D//8A//////wD//4D//4B//////4B//4D//4B//////4B//4D//wD//////8A//4D//wH//////+A//4D//wH//////+A//4D//wH///////A//4D//wH+P///H+A//4D//wD8D//8B+A//4D//wBwA//4A8A//4D//4AAAP/gAAB//4D//8AAAH/AAAB//4D//8AAAH+AAAD//4D//+AAAH+AAAH//4D///AAAH+AAAP//4D///wB4D+A4Af//4D///8H4D8B+B///4D/////4B4B/////4D/////8AAB/////4D/////8AAD/////4D/////+AAD/////4D//////AAH/////4D//////gAP/////4D//////4A//////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4A=",
+		"icon6": "data:image/bmp;base64,Qk1qBAAAAAAAAD4AAAAoAAAAVwAAAFkAAAABAAEAAAAAACwEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////gD//////////////gD//////////////gD//////////////gD/////5/+f/////gD////+B/+B/////gD////wB/+AP////gD////AB/+AD////gD///8AB/+AA////gD///wAB/+AAP///gD///gAB/+AAH///gD//+AAB/+AAB///gD//8AAB/+AAA///gD//4AAB/+AAAf//gD//wAAB/+AAAP//gD//gAAB/+AAAH//gD//AAAB/+AAAD//gD/+AAAB/+AAAB//gD/8AAAB/+AAAA//gD/4AAAB/+AAAAf/gD/wAAAB/+AAAAP/gD/wAAAB/+AAAAP/gD/gAAAB/+AAAAH/gD/AAAAB/+AAAAD/gD/AAAAB/+AAAAD/gD+AAAAB/+AAAAB/gD+AAAAB/+AAAAB/gD8AAAAB/+AAAAA/gD8AAAAB/+AAAAA/gD8AAAAB/+AAAAA/gD4AAAAB/+AAAAAfgD4AAAAB/+AAAAAfgD4AAAf////4AAAfgDwAAAf////4AAAPgDwAAAf////4AAAPgDwAAAf////4AAAPgDwAAAf////4AAAPgDwAAAf////4AAAPgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAAD//AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDwAAAAB/+AAAAAPgDwAAAAB/+AAAAAPgDwAAAAB/+AAAAAPgDwAAAAB//AAAAAPgDwAAAAB//AAAAAPgD4AAAAB//gAAAAfgD4AAAAB//wAAAAfgD4AAAAB///+AAAfgD8AAAAA///+AAA/gD8AAAAA///+AAA/gD+AAAAAf//+AAB/gD+AAAAAf//+AAB/gD/AAAAAP//+AAD/gD/AAAAAH//+AAD/gD/gAAAAD//+AAH/gD/gAAAAB//+AAH/gD/wAAAAAf/+AAP/gD/4AAAAAD/wAAf/gD/8AAAAAAAAAA//gD/+AAAAAAAAAB//gD/+AAAAAAAAAB//gD//AAAAAAAAAD//gD//gAAAAAAAAH//gD//wAAAAAAAAP//gD//8AAAAAAAA///gD//+AAAAAAAB///gD///AAAAAAAD///gD///wAAAAAAP///gD///4AAAAAAf///gD///+AAAAAB////gD////gAAAAH////gD////8AAAA/////gD/////gAAH/////gD//////4f//////gD//////////////gD//////////////gD//////////////gD//////////////gD//////////////gA=",
+		"icon7": "data:image/bmp;base64,Qk1GBAAAAAAAAD4AAAAoAAAAWAAAAFYAAAABAAEAAAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////wD//////////////wD//////////////wD//////////////wD//////////////wD//////////////wCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//+A///Af//AfwCA//+AAAAAf//AfwCA//+AAAAAf//AfwCA///AAAAA///AfwCA///gAAAB///AfwCA///wAAAD///AfwCA///4AAAH///AfwCA///+AAAf///AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCAf/////////+AfwDAH/////////4A/wDAD/////////wA/wDgB/////////gB/wDwA/////////AD/wD4AP///////8AH/wD8AH///////4AP/wD/AD///////wAf/wD/gA///////AA//wD/wAf/////+AA//wD/4AP/////8AA//wD/+AH/////4AA//wD//AB/////gAA//wD//gA/////ABA//wD//wAf///+ADA//wD//8AH///4APA//wD//+AD///wAfA//wD///AB///gA/A//wD///wA///AD/A//wD///4AP/8AH/A//wD///8AH/4AP/A//wD///+AD/wAf/A//wD////gA/AB//A//wD////wAeAD//A//wD////4AAAH/////wD////+AAAf/////wD/////AAA//////wD/////gAB//////wD/////wAD//////wD/////8AP//////wD//////A///////wA=",
+		"icon8": "data:image/bmp;base64,Qk3WBAAAAAAAAD4AAAAoAAAAXwAAAGIAAAABAAEAAAAAAJgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////AA//////7//////4AAH/////7//////wAAD/////7//////gAAB/////7//////AAAA/////7//////AAAA/////7/////+AAAAf////7/////+Af+Af////7/////+A//Af////7/////+B//gf////7/////+B//gf////7/////+B//gf////7/////8B//gf////7/////8AAAAP////7/////8AAAAP////7/////8AAAAP////7/////4AAAAH////7/////4AAAAH////7/////wAAAAD////7/////gAAAAB////7/////AH4H4A////7////+AP4H8Af///7////8Af4H+AP///7////4A/4H/AH///7////wB/4H/gD///7////wD/4H/wD///7////gH/4H/4B///7////AP/4H/8A///7////AP/4H/8A///7////Af/4H/+A///7///+A//4H//Af//7///+A//4H//Af//7///8B//4H//gP//7///8B//4H//gP//7///8B//gB//gP//7///8B//AA//gP//7///8D/+AAf/wP//7///4D/8AAP/wH//7///4D/4AAH/wH//7///4D/4AAH/wH//7///4D/wDwD/wH//7///4D/wH4D/wH//7///4D/wH4D/wH//7///8D/wH4D/wP//7///8B/wP8D/gP//7///8B/4P8H/gP//7///8B/+//f/gP//7///8B//////gP//7///+A//////Af//7///+A//////Af//7////Af////+A///7////AP////8A///7////gP////8A///7////gH////4B///7////wD////wD///7//4PwB////gD8H/7//gP4Af//+AH4B/7/+AH8AP//8AP4Af7/4AH+AD//wAf4AH7/wAP/AAP8AA/4AD7/wAf/gAAAAB/8AD7/wA//wAAAAD//AD7/4H//8AAAAP//wD7/4f///AAAAf//8H7//////wAAD/////7//////8AAP/////7///////4H//////7////4f////+H///7////wP////8D///7////gP////8D///7////gP////8B///7////AP////8A///7////Af////8A///7///+Af////+Af//7///8A//////Af//7///8B//////AP//7///8B//////gP//7///8D//////gP//7///8D//////wP//7///+H//////4f//7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////4=",
+		"icon9": "data:image/bmp;base64,Qk3eBQAAAAAAAD4AAAAoAAAAYQAAAFoAAAABAAEAAAAAAKAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////+AAAAA////////////////gAAAAP///////////////4AAAAD///////////////+AAAAA////////////////gAAAAP///////////////4AAAAD///////////////+AAAAA///gAAH//8AH////gAAAAP//gAAA//4AAP///4AAAAD//gAAAP/4AAAf//+AAAAA//gAAAD/4AAAD///gAAAAP/wAAAA/8AAAAP//4AAAAD/4AAAAf8AAAAB//+AAAAA/8AAAAf+AAAAAP//gAAAAP/AH////AA/+AB//4AAAAD/gD////wA//4AP/+AAAAA/4B////4A///gB//gAAAAP8A////8Af//8Af/4AAAAD/Af///+AP///wD/+AAAAA/wH////gH///8A//gAAAAP4D////wD////gH/4AAAAD+A////8B////8B/+AAAAA/gP////Af////AP/gAAAAP4D////gP////4D/4AAAAD+A////4D//4f+A/+AAAAA/gP///+A//8D/wP/gAAAAP4D////gf/+A/8B/4AAAAD+A////4H//AP/Af+AAAAA/gP///8B//gD/wH/gAAAAP4D////Af/wB/8B/4AAAAD+A////wH/8A//Af+AAAAA/gP///8B//Af/wH/gAAAAP4D////gf/wH/8B/4AAAAD+A////4H/8B//Af+AAAAA/gP///+A//Af/wH/gAAAAP4D////gP/wH/4D/4AAAAD+A////4D/8B/+A/+AAAAA/gP////Af/Af/gP/gAAAAP4D////wH/4H/wH/4AAAAD+A////8A//D/4B/+AAAAA/gP////gH///+Af/gAAAAP4D////4A////AP/4AAAAD+A/////AH///gH/+AAAAA/gP////4A///wB//gAAAAP4D////+AH//wA//4AAAAD+A/////wAf/wAf/+AAAAA/gP////+AAfAAP//gAAAAP4D/////wAAAAH//4AAAAD+A/////+AAAAD//+AAAAA/gP/////4AAAB///gAAAAP4D//////AAAB///4AAAAD+A//////+AAB///+AAAAA/gP//////4AD////gAAAAP4D/////////////4AAAAD+AAAAAAP/////g/+AAAAA/gAAAAAB/////4H/gAAAAP4AAAAAAf////8B/4AAAAD+AAAAAAH/////Af+AAAAA/gAAAAAB/////wH/gAAAAP4AAAAAA/////8B/4AAAAD+A///////////Af+AAAAA/gP//////////wH/gAAAAP4D//////////8B/4AAAAD+A///////////Af+AAAAA/gP//////////wH/gAAAAP4D//////////8B/4AAAAD+A///////////Af+AAAAA/wH//////////gP/gAAAAP8B//////////4D/4AAAAD/AP/////////8A/+AAAAA/4D//////////Af/gAAAAP+AP/////////AH/4AAAAD/wB/////////gD/+AAAAA/8AB///////+AA//gAAAAP/gAAAAAAAAAAAf/4AAAAD/8AAAAAAAAAAAP/+AAAAA//gAAAAAAAAAAH//gAAAAP/+AAAAAAAAAAH//4AAAAD//wAAAAAAAAAD//+AAAAA///gAAAAAAAAH///gAAAAP///+A////wH////4AAAAD////gP///8B////+AAAAA////4D////Af////gAAAAP///+A////wH////4AAAAD////gf///+B////+AAAAA////8H////g/////gAAAAP////j////8f////4AAAAD///////////////+AAAAA////////////////gAAAAP///////////////4AAAAA=",
+		"icon10": "data:image/bmp;base64,Qk2OBAAAAAAAAD4AAAAoAAAAXgAAAFwAAAABAAEAAAAAAFAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z//+AAAA//wAf///z//4AAAB/+AAD///z//gAAAD/4AAAf//z/+AAAAH/gAAAP//z/8AAAAP/AAAAD//z/4AAAAf8AAAAB//z/wAAAAf4AAAAA//z/wAAAA/wAAAAAf/z/gAAAA/wAAAAAP/z/gAAAB/gAAAAAH/z/AAAAD/AAAAAAH/z/AAAAD+AAAAAAD/z/AAAAD+AAAAAAD/z+AAAAH8AAAAAAB/z+AAAAH8AAAAAAB/z+AAAAH8AAAAAAA/z+AAAAP4AAADwAA/z+AAAAP4AAAH4AA/z+AAAAP4AAAP4AA/z+AAAAP4AAAf4AAfz+AAAAP4AAA/4AAfz+AAAAPwAAB/wAAfz+AAAAPwAAD/gAAfz+AAAAPwAAD/AAAfz+AAAAPwAAD+AAAfz+AAAAPwAAD+AAAfz+AAAAP4AAD+AAAfz+AAAAP4AAD+AAAfz+AAAAP4AAD+AAA/z+AAAAP4AAD+AAA/z+AAAAH4AAD+AAA/z+AAAAH8AAB+AAB/z+AAAAH8AAA8AAB/z+AAAAD+AAAAAAB/z+AAAAD+AAAAAAD/z+AAAAD/AAAAAAH/z+AAAAB/gAAAAAH/z+AAAAB/gAAAAAP/z+AAAAA/wAAAAAf/z+AAAAA/4AAAAA//z+AAAAAf8AAAAB//z+AAAAAP+AAAAD//z+AAAAAH/gAAAH//z+AAAAAD/wAAAf//z+AAAAAB/8AAB///z+AAAAAA//gAP///z+AAAAAA///H////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz/AAAAAAAAAAAAA/z/AAAAAAAAAAAAA/z/AAAAAAAAAAAAA/z/gAAAAAAAAAAAB/z/gAAAAAAAAAAAB/z/wAAAAAAAAAAAD/z/wAAAAAAAAAAAD/z/4AAAAAAAAAAAH/z/8AAAAAAAAAAAP/z/+AAAAAAAAAAAf/z//gAAAAAAAAAB//z//wAAAAAAAAAD//z//+AAAAAAAAAf//z////gP///8B////z////gP///8B////z////gP///8B////z////gP///8B////z////gf///+B////z////wf///+D////z////4/////H////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////w=",
+		"icon11": "data:image/bmp;base64,Qk3CAwAAAAAAAD4AAAAoAAAAXgAAAEsAAAABAAEAAAAAAIQDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////wP//////z///////gH//////z///////AD//////z//////+AB//////z//////+AB//////z//////8AA//////z//////8AA//////z//////8AA//////z//////+AB//////z//////+AB//////z///////AD//////z///////gH//////z///////wP//////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z////8f////4////z////wH////gP///z////gD////AH///z////gB///+AH///z////AA///8AD///z////AAP//wAD///z////AAB/+AAH///z////gAADAAAH///z////wAAAAAAP///z////4AAAAAAf///z////8AAAAAA////z////+AAAAAB////z/////AAAAAD////z/////wAAAAP////z/////8AAAA/////z//////AAAD/////z/8P///4AAf///w/z/wD////8/////APz/wB/////////+APz/gA/////////8AHz/gAf////////4AHz/gAP////////wAHz/gAH////////gAHz/wAB///////+AAPz/4AA///////8AAfz/8AAP//////wAA/z/+AAD//////AAB/z//AAA/////8AAD/z//gAAH////gAAH/z//wAAA///8AAAP/z//4AAAB/+AAAAf/z//+AAAAAAAAAB//z///AAAAAAAAAD//z///wAAAAAAAAP//z///8AAAAAAAA///z////AAAAAAAD///z////wAAAAAAP///z////8AAAAAA////z/////gAAAAH////z/////+AAAB/////z//////+AB//////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////w=",
+		"icon12": "data:image/bmp;base64,Qk2eBAAAAAAAAD4AAAAoAAAAYwAAAEYAAAABAAEAAAAAAGAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD////////////////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA////////////////4AAAAP//+AAAAAAAAB///+AAAAD//wAAAAAAAAAA///gAAAA//wAAAAAAAAAAD//4AAAAP/4AAAAAAAAAAAf/+AAAAD/8AAAAAAAAAAAD//gAAAA/+AAAAAAAAAAAAf/4AAAAP/AAAAAAAAAAAAD/+AAAAD/wAAAAAAAAAAAA//gAAAA/8AAAAAAAAAAAAP/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAIAAAAAAAf/gAAAA/wAAAADgAAAAAAD/4AAAAP8AAAAA+AAAAAAA/+AAAAD/AAAAAPwAAAAAAP/gAAAA/wAAAAD/AAAAAAD/4AAAAP8AAAAA/8AAAAAA/+AAAAD/AAAAAP/wAAAAAP/gAAAA/wAAAAD/+AAAAAD/4AAAAP8AAAAA//4AAAAA/+AAAAD/AAAAAP//gAAAAP/gAAAA/wAAAAD//+AAAAD/4AAAAP8AAAAA///wAAAA/+AAAAD/AAAAAP//4AAAAP/gAAAA/wAAAAD//8AAAAD/4AAAAP8AAAAA//8AAAAA/+AAAAD/AAAAAP/8AAAAAP/gAAAA/wAAAAD/8AAAAAD/4AAAAP8AAAAA/+AAAAAA/+AAAAD/AAAAAP+AAAAAAP/gAAAA/wAAAAD+AAAAAAD/4AAAAP8AAAAA+AAAAAAA/+AAAAD/AAAAAPAAAAAAAP/gAAAA/wAAAADAAAAAAAD/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/wAAAAAAAAAAAA//gAAAA/8AAAAAAAAAAAAP/4AAAAP/AAAAAAAAAAAAD/+AAAAD/4AAAAAAAAAAAB//gAAAA/+AAAAAAAAAAAAf/4AAAAP/wAAAAAAAAAAAP/+AAAAD/+AAAAAAAAAAAH//gAAAA//4AAAAAAAAAAH//4AAAAP//wAAAAAAAAAP//+AAAAD////8AAAAAD/////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA",
+		"icon13": "data:image/bmp;base64,Qk3uBAAAAAAAAD4AAAAoAAAAXwAAAGQAAAABAAEAAAAAALAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7//////wAA//////7/////8AAAD/////7/////gAAAAf////7////+AAAAAH////7////4AAAAAB////7////gAAAAAAf///7////AAAAAAAP///7///8AAAAAAAD///7///4AAAAAAAB///7///wAAAAAAAA///7///gAAD/8AAAf//7///AAA///wAAP//7//+AAD///+AAH//7//8AAf////gAD//7//4AA/////wAB//7//wAD/////8AA//7//gAH//5//+AA//7//gAP/4AB//AAf/7//AAf/AAAP/gAP/7//AA/8AAAD/wAP/7/+AB/4AAAB/4AH/7/8AD/gAAAAf8AD/7/8AH/AAAAAP+AD/7/8AH+AAAAAH+AD/7/4AP8AAAAAD/AB/7/4AP4AAAAAB/AB/7/wAf4AAAAAB/gA/7/wAfwAD/4AA/gA/7/wA/wAP/+AA/wA/7/gA/gAf//gAfwAf7/gA/gA///wAfwAf7/gB/AB///wAP4Af7/gB/AD///4AP4Af7/gB/AD/w/8AP4Af7/AB+AH/AP8AH4AP7/AD+AH+AH8AH8AP7/AD+AP8AD+AH8AP7/AD+AP8AD+AH8AP7/AD+AP4AD+AH8AP7/AD+AP4AB/AH8AP7/AD+AP4AB/gH8AP7/AD+AP8AB/wH8AP7/AD+AP8AB/4H8AP7/AD+AP8AA/8H8AP7/AD+AH+AAf+H8AP7/gB/AH/gAH/P4Af7/gB/AD//AH/v4Af7/gB/AD//gD//4Af7/gB/AB//wB//4Af7/gA/gA//4A//4Af7/wA/gAf/8AP//w/7/wA/wAH/+AP//4/7/wAfwAA//AH//8/7/wAf4AAD/gB////7/4AP8AAB/wB////7/4AP+AAA/4Af///7/8AH+AAAf8AAD//7/8AD/AAAP+AAB//7/8AD/wAAH/AAA//7/+AB/4AAD/gAAf/7//AA/+AAB/wAAP/7//AAf/gAB/4AAH/7//gAP/8AD/4AAD/7//wAH/////4AAB/7//wAB/////4AAA/7//4AA/////4AAAf7//8AAP////4Af//7//+AAD////4Af//7///AAAf//v4Af//7///gAAB/4P4Af//7///wAAAAAP4Af//7///4AAAAAP8Af//7///+AAAAAP+Af//7////AAAAAH/Af//7////wAAAAD/gf//7////8AAAAB/wf//7/////AAAAA/4f//7/////4AAAB/8f//7//////AAAP/+f//7///////AP//////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////4=",
+		"icon14": "data:image/bmp;base64,Qk2CBAAAAAAAAD4AAAAoAAAAVAAAAFsAAAABAAEAAAAAAEQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AD//////w//////8AD/////gAAf////8AD////4AAAB////8AD////gAAAAf///8AD///8AAAAAD///8AD///wAAAAAA///8AD///gAAAAAAf//8AD//+AAAAAAAH//8AD//8AAAAAAAD//8AD//4AAAAAAAB//8AD//gAAAAAAAAf/8AD//AAAAAAAAAP/8AD/+AAB/gAAAAH/8AD/8AAP/8AAAAD/8AD/8AA///AAAAD/8AD/4AB///wAAAB/8AD/wAH///4AAAA/8AD/gAP///8AAAAf8AD/gAf///+AAAAf8AD/AAf////AAAAP8AD+AA/////AAAAH8AD+AB/////gAAAH8AD8AB//Af/wAAAD8AD8AD/8AP/wAAAD8AD4AD/4AH/wAAAB8AD4AD/wAD/4AAAB8AD4AD/wAB/4AAAB8ADwAH/gAB/4AAAA8ADwAH/gAB/4AAAA8ADgAH/gAB/4AAAAcADgAH/gAB/4AAAAcADgAH/gAB/4AAAAcADgAH/gAB/4AAAAcADgAD/wAB/4AAAAcADAAD/wAB/4AAAAMADAAD/4AB/4AAAAMADAAD/8AB/4AAAAMADAAB//AB/4AAAAMADAAB///B/4AAAAMADAAA///B/4AAAAMADAAAf//B/4AAAAMADAAAf//B/4AAAAMADAAAP//B/4AAAAMADAAAH//B/4AAAAMADAAAB//B/4AAAAMADAAAA//B/4AEAAMADAAAAP/B/4D+AAMADgAAAB/B/4f+AAcADgAAAAAB/5/+AAcADgAAAAAB/7/+AAcADgAAAAAB///+AAcADwAAAAAB///+AA8ADwAAAAAB///+AA8ADwAAAAAB///+AA8AD4AAAAAB///+AB8AD4AAAAAB///wAB8AD4AAAAAB//+AAB8AD8AAAAAB//4AAD8AD8AAAAAB//wAAD8AD+AAAAAB//gAAH8AD+AAAAAB//AAAH8AD/AAAAAB/+AAAP8AD/gAAAAB/+AAAf8AD/gAAAAB/8AAAf8AD/wAAAAB/8AAA/8AD/4AAAAB/8AAB/8AD/8AAAAB/4AAD/8AD/+AAAAB/4AAH/8AD/+AAAAB/4AAH/8AD//gAAAAAAAAf/8AD//wAAAAAAAA//8AD//4AAAAAAAB//8AD//8AAAAAAAD//8AD///AAAAAAAH//8AD///gAAAAAAf//8AD///4AAAAAB///8AD///+AAAAAH///8AD////gAAAAf///8AD////8AAAD////8AD/////gAAf////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AA=",
+		"icon15": "data:image/bmp;base64,Qk3iBAAAAAAAAD4AAAAoAAAAWQAAAGMAAAABAAEAAAAAAKQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D/v//////3/////4D+D//////B/////4D8D//////A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D+B/////+B/////4D+A/////8B/////4D+A/////8B/////4D+Af////4B/////4D/Af////4D/////4D/AP////wD/////4D/gP////wH/////4D/gH////gH////j4D/wD////AP////B4D/wB///+AP////A4D/4Af//4Af///+A4D/8AP//wA////+A4D/+AD//AB////+A4D//AAPwAD////+A4D//gAAAAH////+A4D//wAAAAP////+B4D//4AAAAf////8B4D//+AAAB/////8B4D///gAAH/////4B4D///8AA//////4D4D////////////wD4D////////////gH4D///////8f///AH4D///////4P//+AP4D///////wD//8Af4D///////wA//wA/4D///////wAP+AA/4D////gP/4AAAAB/4D///+AB/8AAAAH/4D///4AAf+AAAAP/4D///gAAP/gAAA//4D///AAAD/4AAB//4D//+AAAD/+AAP//4D//+AAAB//4D///4D//8APwA///////4D//8A/8A///////4D//4B/+Af//////4D//4D//Af//////4D//wD//AP//////4D//wH//gP//////4D//wH//gP//j///4D//wH//gP/4AP//4D//wH//gP/gAD//4D//wH//gP+AAB//4D//wH//gP8AAAf/4D//wH//gP4AAAP/4D//4D//AfwAAAP/4D//4B/+AfwA+AH/4D//4A/8AfgD/gD/4D//8Af4A/gP/wD/4D//+AAAB/AP/4D/4D//+AAAB/Af/8B/4D///AAAD/Af/8B/4D///gAAH/A//8B/4D///4AAf+A//+B/4D///8AA/+A//+B/4D////gH/+A//+B/4D////////A//8B/4D////////Af/8B/4D////////Af/8B/4D////////AP/4D/4D////////gH/wD/4D////////gD/gD/4D////////wA8AH/4D////////wAAAP/4D////////4AAAf/4D////////8AAAf/4D////////+AAB//4D/////////gAD//4D/////////4Af//4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4A=",
+		"icon16": "data:image/bmp;base64,Qk1eBAAAAAAAAD4AAAAoAAAAVwAAAFgAAAABAAEAAAAAACAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////gD//////////////gD//////////////gD//////////////gD//////wD//////gD/////wAAD/////gD////+AAAAf////gD////wAAAAD////gD////AAAAAA////gD///8AAAAAAP///gD///4AAAAAAH///gD///gAA//AAB///gD///AAP//8AA///gD//8AB////gAP//gD//4AH////4AH//gD//wAf////+AD//gD//gA//////AB//gD//AD//////wA//gD/+AH//////4Af/gD/+AP//////8Af/gD/8Af//////+AP/gD/4A////////AH/gD/wB////////gD/gD/wD////////wD/gD/gH////////4B/gD/gP////////8B/gD/AP////////8A/gD/Af////////+A/gD+Af////////+AfgD+A//////////AfgD8A//////////APgD8B//////////gPgD8B//////////gPgD4D//8///////gHgD4D//4P//////wHgD4D//wD//////wHgD4D//wB//////wHgD4H//wAf/////4HgDwH//wAP/////4DgDwH//8AD/////4DgDwH//+AA/////4DgDwH///gAf////4DgDwH///wAP////4DgDwH///8AH////4DgDwH////AH////4DgDwH////gH////4DgDwH////wH////4DgDwH////4H////4DgDwH////4H////4DgDwH////4H////4DgD4H////4H////4HgD4H////4H////4HgD4D////4H////wHgD4D////4H////wHgD4D////4H////wHgD8B////4H////gPgD8B////4H////gPgD8B////4H////gPgD+A////4H////AfgD+A////4H////AfgD+Af///4H///+AfgD/Af///4H///+A/gD/AP///4H///8A/gD/gH///8P///4B/gD/wD////////wD/gD/wD////////wD/gD/4B////////gH/gD/4A////////AH/gD/8Af//////+AP/gD/+AP//////8Af/gD//AH//////4A//gD//gB//////gB//gD//wA//////AD//gD//4AP////8AH//gD//8AD////wAP//gD//+AA////AAf//gD///AAH//4AA///gD///wAADwAAD///gD///4AAAAAAH///gD///+AAAAAAf///gD////gAAAAB////gD////4AAAAH////gD/////AAAA/////gD/////8AAP/////gD//////////////gD//////////////gD//////////////gD//////////////gA=",
+		"icon17": "data:image/bmp;base64,Qk1SBAAAAAAAAD4AAAAoAAAAXQAAAFcAAAABAAEAAAAAABQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////j///////////////j///////////////j///////////////j///////////////j///////////////j///////////////j////8P////8P///j////gB////gB///j///+AAf//+AA///j///8AAP//8AAP//j///4AAH//4AAP//j///4AAB//gAAH//j///wAAA//AAAD//j///wDwAf+ADwD//j///gH8AH4AP4D//j///gP+ADwAf8B//j///gP/ABgA/8B//j///gP/wAAD/8B//j///gP/4AAH/8B//j///wH/8AAP/4D//j///wH//AA//4D//j///wH//gB//4D//j///wH//wD//4D//j///4D//8P//wH//j///4D//////wH//j///4D//////wH//j///8B//////gP//j///8B//////gP//j///8B//////gP//j///+A//////Af//j///+A//////Af//j///+A//////Af//j////Af////+A///j////Af////+A///j////Af////+A///j///+AP////8Af//j///4Af////+AH//j///wAf////+AD//j///gA//////AB//j//+AD//////wAf/j//8AH//////4AP/j//wAP//////8AD/j//gA////////AB/j//AB////////gA/j/+AD////////wAfj/8AP////////8APj/4Af////////+AHj/4B//////////gHj/4D//////////wDj/wH//////////4Dj/wH//////////4Dj/wH//////////4Dj/wH//////////4Dj/wH//////////4Dj/wD//////////wDj/4B//////////gHj/4AAAAP//8AAAAHj/8AAAAH//4AAAAPj/+AAAAH//4AAAAPj//AAAAH//4AAAAfj//gAAAD//wAAAB/j//wAAAD//wAAAD/j/////4D//wH////j/////8B//gP////j/////8B//gP////j/////8B//gP////j/////+A//Af////j/////+A//Af////j/////+A//Af////j//////Af+A/////j//////Af+A/////j//////Af+A/////j//////gP8B/////j//////gP8B/////j//////gP8B/////j//////wH4D/////j//////wDwD/////j//////wAAD/////j//////4AAH/////j//////8AAP/////j//////8AAP/////j///////AA//////j///////gB//////j///////8P//////j///////////////j///////////////g=",
+		"icon18": "data:image/bmp;base64,Qk1GBAAAAAAAAD4AAAAoAAAAXgAAAFYAAAABAAEAAAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////z///////////////z///////////////z///////////////z//8AAAAAAAAD///z//AAAAAAAAAAP//z/8AAAAAAAAAAD//z/4AAAAAAAAAAB//z/wP/////////A//z/g//////////wf/z/D//////////8P/z+H//////////+H/z+H//////////+H/z8P///////////D/z8f///////////j/z8f///////////j/z4f///////////h/z4f///////////h/z4////8A//////x/z4////4Af/////x/z4////wAP/////x/z4////g8H/////x/z4///+D/D/////x/z4///8H/h/////x/z4///4P/w/////x/z4///wf/4f////x/z4///g//8P////x/z4///B//+D////x/z4//+D///D////x/z4//8H///g////x/z4//4P///wf///x/z4//wf///4P///x/z4//w////8H///x/z4//x////+D///x/z4////////B///x/z4////////g///x/z4////////wf//x/z4////////4P//x/z4////////8H//x/z4////////+D//x/z4/////////B//x/z4/////////g//x/z4/////////w//x/z4/////////4//x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4AAAAAAAAAAAAB/z4AAAAAAAAAAAAB/z4AAAAAAAAAAAAB/z4AAAAAAAAAAAAB/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4f///////////h/z4f///////////h/z8f///////////j/z8f///////////j/z8P///////////D/z+H//////////+H/z+H//////////+H/z/D//////////8P/z/g//////////wf/z/wP/////////A//z/4AAAAAAAAAAB//z/8AAAAAAAAAAD//z//AAAAAAAAAAP//z//+AAAAAAAAH///z///+P/////H////z///+P/////H////z///+P/////H////z///+P/////H////z///+P/////H////z///+P/////H////z///////////////z///////////////w=",
+		"icon19": "data:image/bmp;base64,Qk1SBAAAAAAAAD4AAAAoAAAARAAAAFcAAAABAAEAAAAAABQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////AAAAD/////4/////AAAAD/////gP////AAAAD/////AH////AAAAD////+AH////AAAAD////+PD////AAAAD////8Ph////AAAAD////8Ph////AAAAD////+Pw////AAAAD////+Pw////AAAAD////+H4f///AAAAD////+H8P///AAAAD/////H8P///AAAAD/////D+H///AAAAD/////D/H///AAAAD/////j/D///AAAAD/////j/h///AAAAD/////h/h///AAAAD/////x/w///AAAAD/////x/4f//AAAAD/////w/4f//AAAAD/////w/8P//AAAAD/////4/8P//AAAAD/////4f+H//AAAAD/////4f/D//AAAAD/////8f/D//AAAAD/////8f/h//AAAAD/////8P/w//AAAAD//wAAAP/w//AAAAD//AAAAP/4f/AAAAD/+AAAAP/4f/AAAAD/8H/////8P/AAAAD/4f/////+H/AAAAD/4f/////+H/AAAAD/4///////D/AAAAD/w///////h/AAAAD/w///////h/AAAAD/w///////w/AAAAD/4///////w/AAAAD/4///////4fAAAAD/4f//////8fAAAAD/4f//////8PAAAAD/8f//////8PAAAAD/8P//////8PAAAAD/8P//////8fAAAAD/+P//////8fAAAAD/+P//////4fAAAAD/+H//////g/AAAAD/+H///gAAA/AAAAD//H///gAAD/AAAAD//H///gAAH/AAAAD//D///h////AAAAD//D///x////AAAAD//j///x////AAAAD//j///w////AAAAD//h///4////AAAAD//x///4f///AAAAD//x///4f///AAAAD//w///8f///AAAAD//w///8P///AAAAD//4///8P///AAAAD//4///+P///AAAAD//4f//+H///AAAAD//8f//+H///AAAAD//8f///H///AAAAD//8f///D///AAAAD//8P///D///AAAAD//+P///j///AAAAD//+P///h///AAAAD//+H///x///AAAAD//+H///x///AAAAD///H///w///AAAAD///H///4///AAAAD///D///4///AAAAD///j///4///AAAAD///j///4///AAAAD///h///w///AAAAD///wf//g///AAAAD///4AAAB///AAAAD///8AAAD///AAAAD///+AAAH///AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAA=",
+		"icon20": "data:image/bmp;base64,Qk0eAgAAAAAAAD4AAAAoAAAAPAAAADwAAAABAAEAAAAAAOABAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD/////////8P/////////w//////////D///8AH///8P//8AAD///w//+AAAB///D//wAAAA//8P/wB337Af/w/8Afffvcf/D/mB99+74f8P44D337vt/w/HwPffO+7/D7fA99977n8Oc8DmAAPMHw77wAAAABwfDvgAAAAAAA8OAAAAAAAADw+AAAAAAAAPDwAAAAAAAD8PAAAAAAAAHw8AAAAAAAAfDgAAAAAAAB8OAAAAAAAAHw4AAAAAAAAPDgAAAAAAAA8OAAAAAAAADw4AAAAAAAAPDgAAAAAAAA8OAAAAAAAADw4AAAAAAAAPDgAAAAAAAB8PAAAAAAAAHw8AAAAAAAAfDwAAAAAAAD8PAAAAAAAAPw+AAAAAAAB/D8AAAAAAAH8PwAAAAAAA/w/gAAAAAAD/D+AAAAAAAf8P8PvwAefB/w/z+f4f5/3/D/H/+AP/4f8P+AAAAAAD/w/8AAAAAA//D/+AAAAAP/8P//AAAAD//w//+AAAA///D//+AAAP//8P//+AAD///w////AA////D////8L///8P////8////w/////5////D/////3///8P/////f///w//////////D/////////8P/////////w//////////A=",
+		"icon21": "data:image/bmp;base64,Qk0eAgAAAAAAAD4AAAAoAAAAPAAAADwAAAABAAEAAAAAAOABAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD/////////8P/////////w//////////D///8AB///8P//8AAA///w//+AAAA///D//gADAA//8P/8AAeAA//w//AAB4AB//D/4AAHgAD/8P/AAA+AAH/w/4AAD4AAP/D/gAAHgAAf8P8AAAeAAA/w/gAAB4AAB/D+AAAHAAAH8PwAAAMAAAPw/AAAAAAAA/D4AAAAAAAB8PgAAAAAAAHw+AAAAAAAAfD4AAAAAAAA8PAAAAAAAADw8AAAAAAAAPDwAAAAAAAA8PAAAAAAAADw8AAAAAAAAPDwAAAAAAAA8PAAAAAAAADw8AAAAAAAAPDwAAAAAAAA8PAAAAAAAADw+AAAAAAAAPD4AAAAAAAB8PgAAAAAAAHw+AAAAAAAAfD8AAAAAAAB8PwAAAAAAAPw/gAAAAAAA/D+AAAAAAAH8P8AAAAAAAfw/wAAAAAAD/D/gMABAAAf8P/AwBmAIB/w/8BgMYBgP/D/4HBwwMB/8P/wP+BzgP/w//wPwD8B//D//gAAAAf/8P//AAAAD//w///AAAA///D///AAAH//8P///AAD///w////4A////D/////N///8P////+f///w///f/94f//D//+H/3z//8P/////////w//////////A=",
+		"icon22": "data:image/bmp;base64,Qk1uAwAAAAAAAD4AAAAoAAAARQAAAEQAAAABAAEAAAAAADADAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD///////////gAAAD///////////gAAAD////4AH////gAAAD///8AAAf///gAAAD///gAAAD///gAAAD//+AAAAA///gAAAD//4AAAAAP//gAAAD//wAAAAAH//gAAAD//AAAAAAD//gAAAD/+AAAAAAA//gAAAD/8AAAAAAAf/gAAAD/4AAAAAAAP/gAAAD/wAAf/8AAH/gAAAD/gAH///wAH/gAAAD/gA/wAH8AD/gAAAD/AD8AAAfAB/gAAAD/AHwAAAHwB/gAAAD+AfAAAAB4A/gAAAD+A8AAAAAeA/gAAAD8B4AAAAAPAfgAAAD8DgAAAAAHgfgAAAD8HAAAAAADgPgAAAD4HAAAAAABwPgAAAD4OAAAAAAA4PgAAAD4MAAAAAAAYPgAAAD4cAAAAAAAcPgAAAD4YAAAAAAAMHgAAAD44AAAAAAAOHgAAAD4wAAAAAAAOHgAAAD4wAAAAAAAGHgAAAD4wAAAAAAAGHgAAAD4wAAAAAAAGPgAAAD4wAAAAAAAGPgAAAD4AAAAAAAAAPgAAAD4AAAAAAAAAPgAAAD4AAAAAAAAAPgAAAD8AAAAAAAAAPgAAAD8AAH4AH4AAfgAAAD8AAf+Af+AAfgAAAD+AA//A//AAfgAAAD+AB//B//gA/gAAAD/AB//h//gA/gAAAD/AD//h//wB/gAAAD/gD/4yP/wB/gAAAD/gD/4yP/wD/gAAAD/wD/8yP/wH/gAAAD/4D//j//wP/gAAAD/8D//h//gP/gAAAD/+B//h//gf/gAAAD//A//A//A//gAAAD//g/+Af+B//gAAAD//wP8AP8H//gAAAD//4BgABgP//gAAAD//+AAAAAf//gAAAD///AAAAB///gAAAD///4AAAH///gAAAD///+AAA////gAAAD////4AD////gAAAD/////8bf///gAAAD////f+Lg///gAAAD///w//Pz///gAAAD///5//v////gAAAD//////3////gAAAD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAA=",
+		"icon23": "data:image/bmp;base64,Qk16AwAAAAAAAD4AAAAoAAAARAAAAEUAAAABAAEAAAAAADwDAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAD////gAH////AAAAD///wAAA////AAAAD///AAAAH///AAAAD//8AAAAB///AAAAD//wAAAAAf//AAAAD//AAAAAAP//AAAAD/+A////+D//AAAAD/8AP///+B//AAAAD/4AAAAAAA//AAAAD/wAAAAAAAf/AAAAD/gAAAAAAAP/AAAAD/AAAABgAAP/AAAAD/AAAABwAAH/AAAAD+AAAABwAAD/AAAAD8AAAABgAAD/AAAAD8AAAAAgAAB/AAAAD4AAAAAAAAB/AAAAD4AAAAAAAAA/AAAAD4AAAAAAAAA/AAAAD4AAAAAAAAAfAAAADwAAAAAAAAAfAAAADwAAAAAAAAAfAAAADwAAAAAAAAAfAAAADwAAAAAAAAAfAAAADwAAAAAAAAAfAAAADwAAAAAAAAAfAAAADwAD/gAAOAAfAAAADwAH/wAA/wAfAAAADwAf/8AD/4AfAAAADwA//+AH/8AfAAAADwA//+AH/+AfAAAADwB///AP/+AfAAAADwB///AP5+AfAAAADwD///gPx+AfAAAAD4D/x/gPx+A/AAAAD4D/h/gP/+A/AAAAD4D/h/gP/+A/AAAAD8D/z/gH/+B/AAAAD8D///gH/8B/AAAAD+D///gD/4D/AAAAD+B///AA/wD/AAAAD/B///AAOAH/AAAAD/A//+AAAAH/AAAAD/gf/8AAAIP/AAAAD/wP/4AAAof/AAAAD/4H/wAACo//AAAAD/8B/AAACp//AAAAD/+AAAAACp//AAAAD//AAAAACn//AAAAD//gAAAACP//AAAAD//wAAAAAf//AAAAD//8AAAAB///AAAAD///AAAAH///AAAAD///wAAAf///AAAAD///+AAB////AAAAD////wAf////AAAAD//e/+J/zv//AAAAD//h/+Z/4f//AAAAD//j/+b/8f//AAAAD//3/+7/+///AAAAD////9//////AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAA=",
+		"icon24": "data:image/bmp;base64,Qk0+AwAAAAAAAD4AAAAoAAAAQwAAAEAAAAABAAEAAAAAAAADAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD//////////+AAAAD////gAf///+AAAAD///wAAB///+AAAAD//+AAAAP//+AAAAD//4AAAAD//+AAAAD//gAAAAB//+AAAAD/+AAAAAAf/+AAAAD/8AAAAAAP/+AAAAD/4AAAAAAD/+AAAAD/wAAAAAAB/+AAAAD/gAAAAAAA/+AAAAD/AAAAAAAAf+AAAAD+AAAAAAAAf+AAAAD+AAAAAAAAP+AAAAD8AAAAAAAAH+AAAAD4AAAAAAAAH+AAAAD4AAAAAAAAD+AAAAD4AAAAAAAAD+AAAADwAAAAAAAAB+AAAADwAAAAAAAAB+AAAADwAAAAAAAAB+AAAADgAAAAAAAAA+AAAADgAAAAAAADg+AAAADgAAAAAAADw+AAAADgAAAAAAAH4+AAAADgAAAAAAAH4+AAAADgAAAAAAAH4+AAAADgAAAAAAADweAAAADgAAAAAAADweAAAADgAAAAAAABg+AAAADgAAAAAAABg+AAAADgAAAA/4ABA+AAAADgAAB///wDA+AAAADgAAP///+HA+AAAADgAB/////+A+AAAADwAH/////+A+AAAADwAP//////B+AAAADwA///////h+AAAAD4B///g///z+AAAAD4D//AAAP/7+AAAAD8B/wAAAB/7+AAAAD8B+AAAAAP3+AAAAD+AQAAAAAAP+AAAAD+AAAAAAAAP+AAAAD/AAAAAAAAf+AAAAD/gAAAAAAA/+AAAAD/wAAAAAAA/+AAAAD/wAAAAAAB/+AAAAD/4cAOAwAD/+AAAAD/+bj+A8D//+AAAAD//H/8AP///+AAAAD//j/wAP///+AAAAD//4/AAD+//+AAAAD//8AAAAD//+AAAAD///AAAAf//+AAAAD///4AAB///+AAAAD////AAP///+AAAAD////fxOZ//+AAAAD///+/4vn//+AAAAD///h/8////+AAAAD/////+////+AAAAD/////+////+AAAAD//////////+AAAAD//////////+AAAAA=",
+		"icon25": "data:image/bmp;base64,Qk3CAwAAAAAAAD4AAAAoAAAARgAAAEsAAAABAAEAAAAAAIQDAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD////4AA////wAAAD///+AAAH///wAAAD///wAAAA///wAAAD///AAAAAP//wAAAD//8AAAAAD//wAAAD//4AAAAAB//wAAAD//wAAAAAA//wAAAD//AAAAAAAP/wAAAD/+AAAAAAAH/wAAAD/8AAAAAAAD/wAAAD/8AAAAAAAD/wAAAD/4AAAAAAAB/wAAAD/wAAAAAAAA/wAAAD/wAAAAAAAAfwAAAD/gAAAAAAAAfwAAAD/gAAAAAAAAPwAAAD/AAAAAAAAAPwAAAD/AAAAAAAAAHwAAAD/AAAAAAAAAHwAAAD+AAAAAAAAAHwAAAD+AAAAAAAAADwAAAD+AAAAAAAAADwAAAD+AAAAAAAAADwAAAD+AAAAAAAAADwAAAD8AAAAAAAAADwAAAD4AAAAAAAAADwAAADwAAAAAAAAADwAAADwAAAAAAAAADwAAADwAAAAAAAAADwAAAD4AAAAAAAAADwAAAD8AAAAAAAAADwAAAD+AAAAAAAAADwAAAD+AAAAAAAAADwAAAD+AAAAAAAAAHwAAAD+AAAAAAAAAHwAAAD/AAAAAAAAAHwAAAD/AAAAAAAAAHwAAAD/AAAAAAAAAPwAAAD/gAAAAAAAAPwAAAD/gAAAAAAAAfwAAAD/wAAAAAAAAfwAAAD/4AAAAAAAA/wAAAD/4AH+Af8AB/wAAAD/8Af/A/+AB/wAAAD/+A//h//AD/wAAAD/+A/8h/zAH/wAAAD//Af8A/wAP/wAAAD//gP8Af4Af/wAAAD//4AAAAAA//wAAAD//8AAAAAB//wAAAD//+AAAAAH//wAAAD+HngAAAAP//wAAAD+GP4AAAA///wAAAD8Af8AAAAf//wAAADwA/wAAAQD//wAAADgAfAfAD+D//wAAADgAeB/8L/j//wAAADgAeH/+N////wAAADgAff//P////wAAADwAf///v////wAAAD4w////n////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAD///////////wAAAA=",
+		"icon26": "data:image/bmp;base64,Qk2eAwAAAAAAAD4AAAAoAAAARwAAAEgAAAABAAEAAAAAAGADAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD///////////4AAAD///////////4AAAD///////////4AAAD///////////4AAAD///////////4AAAD////wAH////4AAAD///8AAAf///4AAAD//wAAAAAA//4AAAD//gAAAAAAf/4AAAD//A/////+P/4AAAD//D//////n/4AAAD//H//////n/4AAAD/+H//////3/4AAAD/8D//////n/4AAAD/4B//////H/4AAAD/wAAP//wAH/4AAAD/gAAD//gAD/4AAAD/gAAAAAAAD/4AAAD/AAAAAAAAB/4AAAD/AAAAAAAAB/4AAAD+AB//////A/4AAAD+AD//////g/4AAAD8AH//////gf4AAAD8AD//////gf4AAAD8AD//////AP4AAAD4AAAAf/gAAP4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAH4AAAD4AAAAAAAAAH4AAAD4AAAAAAAAAH4AAAD4AAAAAAAAAH4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAP4AAAD4AAAAAAAAAP4AAAD8AAAAAAAAAP4AAAD8AAAAAAAAAf4AAAD8AAAAAAAAAf4AAAD+AAA/gAfgAf4AAAD+AAB/4A/4A/4AAAD/AAA/8Af4A/4AAAD/AAAf8Af8B/4AAAD/gAE/+H/8D/4AAAD/gAH/+H/+D/4AAAD/wAP/+H/+H/4AAAD/4AH/+H/+P/4AAAD/8AH/+H/8P/4AAAD/+AH/+D/8f/4AAAD//AD/8D/4//4AAAD//gD/8B/x//4AAAD//wB/4Afn//4AAAD//4AfgAAP//4AAAD//+AAAAA///4AAAD///gAAAB///4AAAD///4AAAH///4AAAD///+AAA////4AAAD////8AD/+//4AAAD/////8b/+//4AAAD/////+L/5//4AAAD///v//P+D//4AAAD///n//v/v//4AAAD///z//3////4AAAD///8f//////4AAAD///////////4AAAD///////////4AAAD///////////4AAAD///////////4AAAD///////////4AAAA=",
+		"icon27": "data:image/bmp;base64,Qk16AwAAAAAAAD4AAAAoAAAAQwAAAEUAAAABAAEAAAAAADwDAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD//////////+AAAAD//////////+AAAAD//////////+AAAAD//////////+AAAAD///8AAH///+AAAAD///gAAA///+AAAAD//8AAAAH//+AAAAD//wAAAAB//+AAAAD//AAAAAA//+AAAAD/+AB//gAP/+AAAAD/8AP//8AH/+AAAAD/wA////AD/+AAAAD/gD////wB/+AAAAD/AP////8A/+AAAAD/Af////+Af+AAAAD+AAADAAAAP+AAAAD8AAA/+AAAP+AAAAD8AAB/+AAAH+AAAAD4AAB//AAAD+AAAAD4AAB//AAAD+AAAADwAAB/+AAAB+AAAADwAAAAAAAAB+AAAADwAAAAAAAAB+AAAADgAAAAAAAAA+AAAADgAAAAAAAAA+AAAADgAAAAAAAAA+AAAADgAAAAAAAAA+AAAADg////////A+AAAADg////////A+AAAADgf///////AeAAAADgH//////4AeAAAADgAP////8AAeAAAADgAAA/+AAAA+AAAADgAAAAAAAAA+AAAADgAAAAAAAAA+AAAADgAAAAAAAAA+AAAADgAAAAAAAAA+AAAADgAAAAAAAAA+AAAADwAAAAAAAAB+AAAADwAAAAAAAAB+AAAADwAf4AAH8AB+AAAAD4A/+AAf/AD+AAAAD4B//AA//gD+AAAAD8D//AB//wH+AAAAD8D//gB//wH+AAAAD+H//gD//4P+AAAAD/H//wD//4P+AAAAD/H/jwDz/4f+AAAAD/n/jwDx/4/+AAAAD/n/jwDx/4/+AAAAD/n/jgDx/4/+AAAAD/j/3gBz/x/+AAAAD/j//AB//x/+AAAAD/x//AA//h/+AAAAD/4/+AAf/D/+AAAAD/4f4AAH8H/+AAAAD/8AAAAAAP/+AAAAD//AAAAAAf/+AAAAD//wOAAGD//+AAAAD////8Af///+AAAAD/////xf///+AAAAD/////5f///+AAAAD/////9////+AAAAD/////9////+AAAAD///v/9/v//+AAAAD///x//4f//+AAAAD//////+///+AAAAD//////////+AAAAD//////////+AAAAA=",
+		"icon28": "data:image/bmp;base64,Qk2qAwAAAAAAAD4AAAAoAAAARAAAAEkAAAABAAEAAAAAAGwDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////AAAAD///////////AAAAD///////////AAAAD//4f///////AAAAD/+AB///////AAAAD/4AAD+/////AAAAD/gAAB8/////AAAAD/AAAM8///f/AAAAD+AAAe+8//f/AAAAD9AAAee+//P/AAAAD9AAAfe+//P/AAAAD7AAAfef//H/AAAAD6AAAfPf/+H/AAAAD6AAAPPP/+H/AAAAD6AAAPvv/8H/AAAAD6AAAPvn/4H/AAAAD6AABHvz/0H/AAAAD9AADHv5/MP/AAAAD+AAHH78YcP/AAAAD/AAfDx/j8P/AAAAD/8H/h2//If/AAAAD////g2//I//AAAAD////wf//o//AAAAD////wB//x//AAAAD////4AAPz//AAAAD////B//Aj//AAAAD///4H//+H//AAAAD///wf/4Dz//AAAAD///Az/H49//AAAAD//+Br8//Of/AAAAD//8BZ5//3v/AAAAD//4Db3/H73/AAAAD//wH/38B97/AAAAD//gH/v9+87/AAAAD//gP/vYHe9/AAAAD//Av/vIAe+/AAAAD//AP/voOey/AAAAD/+Af/v+h+y/AAAAD/+AR/v//+3fAAAAD/+AAPv//+/fAAAAD/+AAD3//+BfAAAAD/8AAA3v/8AfAAAAD/8AAAbp/4AfAAAAD/8AAAJrl4AfAAAAD/8AAAEv7wAfAAAAD/8AAADfzAAfAAAAD/8ADgDn8AAfAAAAD/8AHgh4AAAfAAAAD/8AHBx/wAAfAAAAD/+AHBw/hggfAAAAD/+ABBg/jg4fAAAAD/+AAAA/hg8/AAAAD/+AAAA/hg8/AAAAD//AAAA/gA4/AAAAD//AAAB/gAB/AAAAD//gAAB/gAB/AAAAD//gAAD/gAD/AAAAD//gAAH/gAH/AAAAD//AAAH/wAH/AAAAD/+AAAf/4AP/AAAAD/+EB//z8Af/AAAAD/+CB//j+Af/AAAAD/+AA//p/gP/AAAAD//AAf/p/kP/AAAAD//AEP/7+AP/AAAAD//gPD//gAf/AAAAD////4HgeA//AAAAD////////j//AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAA=",
+		"icon29": "data:image/bmp;base64,Qk1eAgAAAAAAAD4AAAAoAAAAPgAAAEQAAAABAAEAAAAAACACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////P/////////8//////////z//////////P/////////8///+AAf///z///AAAH///P//wB/AH//8//8D//4H//z//B///4P//P/4P///4P/8//D////4f/z/wf////w//P+H/////h/8/4//////D/z/H/////+H/P4//+A//8P8/H//gA//4/z8f/4AA//x/Pj//AAB//j88f/4AAD/+Pzx//AAAP/8fPP/8AAAf/x84//wAAB//nzn/+AAAD/+PMf/4AAAP/48x//gAAA//zzH/+AAAD//HM////////8cz////////xyP////////nI////////+cj////////5yP////////nI////////+cj////////5yPn/9/5//fnI+P/j/n/58cz4/+P+f/nxzPj/4/4/+fHMfH/H/j/x8cx8f8f/H+PzzH4fD/8Pw+POPwAf/4AH484/gD//4A/nzz/g///4f8fPH///////x8+P//////+Pz4///////x/Px///////H8/D//////4/z+P//////D/P8f/////4f8/4//////D/z/x/////4f/P/h/////D/8//D////4f/z/+D///+D//P/8D///g//8//8B//wH//z//8AfgB///P//8AAA///8////AAf///z//////////P/////////8//////////z//////////P/////////8",
+		"icon30": "data:image/bmp;base64,Qk0uBgAAAAAAAD4AAAAoAAAAYgAAAF8AAAABAAEAAAAAAPAFAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD////////////////AAAAA////////////////wAAAAP///////////////8AAAAD///////g////////AAAAA//////wAAH//////wAAAAP/////AB8AH/////8AAAAD////+A///gf/////AAAAA////+B////A/////wAAAAP///+D////+D////8AAAAD///+H/////4P////AAAAA////D//////h////wAAAAP///D//////+H///8AAAAD///j///////w////AAAAA///h////////H///wAAAAP//w////////4///8AAAAD//4///4AH///H///AAAAA//8f//wAAP//8///wAAAAP/+P//wf/gf//n//8AAAAD//H//w///B//8///AAAAA//j//w///8P//n//wAAAAP/5//4f///h//4//8AAAAD/8f/8D///wP//H//AAAAA/+P/+AP//wB//4//wAAAAP/H//AAf/gAP//P/8AAAAD/z//gAAAAAB//x//AAAAA/4//4AAAAAAP/+f/wAAAAP+f/8AAAAAAD//z/8AAAAD/H/+AAAAAAAf/8//AAAAA/z//gAAAAAAD//n/wAAAAP4//4AAAAAAA//5/8AAAAD+f/8AAAAAAAP//P/AAAAA/H//AAAAAAAB//z/wAAAAPz//wAf///wAf/8f8AAAAD8//4H/////8H//n/AAAAA+P/+P//////x//5/wAAAAPn//j//////+f//P8AAAAD5//4///////n//z/AAAAA+f/+AAAAAAAB//8/wAAAAPP//wAAAAAAA///P8AAAADz/////////////7/AAAAA8/////////////+fwAAAAPP/////////////n8AAAADz/////////////5/AAAAA8/////////////+fwAAAAPP/////////////n8AAAAD3//+H/////8f//5/AAAAA5//+A/////+D//+fwAAAAOf//HH/////GP//n8AAAAD3//H4/////Hw//5/AAAAA9//j/n////j/H/+fwAAAAPf/j/8////x/4//n8AAAADz/x//j///4//n/5/AAAAA8/4//8///8f/8f+fwAAAAPP8f//n//+P//n/n8AAAADz/P//8///n//8/5/AAAAA8/n///P//z///n+fwAAAAPP5///5//5///5/P8AAAAD58///+f/+f///Pz/AAAAA+fP///z//n///z8/wAAAAPnz///8//7///8/P8AAAAD58////P/8////Pn/AAAAA/PP///z//P///z5/wAAAAPzz/7/8//7///8+f8AAAAD8ef+f/f/+f/f/PH/AAAAA/nn/H/n//n/j/nz/wAAAAP58fg/x//4/4fx4/8AAAAD/PgDH4///H8j4+f/AAAAA/z8B4Af//48cAfn/wAAAAP+f//gf///APwfz/8AAAAD/n///////+f//4//AAAAA/8///////////+f/wAAAAP/H///////////H/8AAAAD/5///////////j//AAAAA//P//////////5//wAAAAP/x//////////8f/8AAAAD/+P/////////+P//AAAAA//x//////////H//wAAAAP/+P/////////j//8AAAAD//x/////////x///AAAAA//+P////////4///wAAAAP//x////////8f//8AAAAD//+P///////+P///AAAAA///w////////H///wAAAAP//+H///////D///8AAAAD///4f//////D////AAAAA////B//////B////wAAAAP///8H/////B////8AAAAD////wf////B/////AAAAA/////Af//+B/////wAAAAP////+AP/wD/////8AAAAD/////8AAAH//////AAAAA//////+AAf//////wAAAAP///////////////8AAAAD////////////////AAAAA////////////////wAAAAA==",
+		"icon31": "data:image/bmp;base64,Qk2aBAAAAAAAAD4AAAAoAAAAXAAAAF0AAAABAAEAAAAAAFwEAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD///////////////D///////////////D//////wAf//////D/////4AAA//////D/////AH/gD/////D////4H///Af////D////g////8H////D///+D/////B////D///4P/////w////D///w//////8P///D///D///////H///D//+P///////h///D//8f///////4///D//4////////8f//D//h////////+P//D//H/////////H//D//P/////////j//D/+f/////////x//D/8f/////////4//D/4//////////8f/D/x////+P////+f/D/z////gA////+P/D/n///+AAH////H/D/H///4AAB////n/D/P///wB4A////j/D+f///g//gf///z/D+f///D//4P///5/D8///+P//+H///5/D8///8f///n///8/D5///5////z///8/D5///7////5///8fDx////////9///+fDz////////////+fDz/////////////fDj/////////////PDn/////////////PDn/////////////PDn/////////////PDn/////////////nDH/////////////nDP/////////////nDP/////////////nDP/////////////nDP/////////////nDP/////////////nDP/////////////nDP//+f/////////nDP//4H/////////nDP//wD/////////nDP//wD/////////nDP//gB//////3//nDP//gB///8//H//nDP//gB///8P8P//nDn//gB///+AAf//nDn//gB////AAf//nDn//gB////gAP//PDn//gB////4A///PDj//gB/////////PDz//wB/////////PDz//wD////////+fDz//4D////////+fD5//8H////////+fD5//+f////////8/D8////////////8/D8////////////4/D8f///////////5/D+f///////////x/D+P///////////z/D/P///////////n/D/H///////////H/D/j///////////P/D/z//////////+P/D/5//////////8f/D/4//////////4//D/8f/////////5//D/+P/////////z//D//H/////////j//D//j/////////H//D//x////////+P//D//4////////4f//D//8P///////x///D//+H///////j///D///h//////+H///D///w//////4f///D///8P/////g////D////B////+D////D////wf///wP////D////8B//+B/////D/////gAAAH/////D/////+AAB//////D///////////////D///////////////D///////////////A=",
+		"icon32": "data:image/bmp;base64,Qk0OBgAAAAAAAD4AAAAoAAAAbgAAAF0AAAABAAEAAAAAANAFAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD//////////////////AAA//////////////////wAAP/////////////////8AAD////////x/////////AAA///////wAAH///////wAAP//////AB8AH//////8AAD//////Af//Af//////AAA/////+B////A//////wAAP////+D////+D/////8AAD////+D/////4f/////AAA/////D//////h/////wAAP////D//////+P////8AAD////h///////w/////AAA////x////////H////wAAP///4////////4////8AAD///8f////////H////AAA///+P//+AB///4////wAAP///P//8AAB///H///8AAD///j//4H/4H//4////AAA///x//4P//wf//H///wAAP//4//4f///h//4///8AAD//8f/8P///8P//P///AAA///P/+P////x//5///wAAP//n//D////8P/+P//8AAD//x//gf///+B//z///AAA//8//wB///+AP/+f//wAAP/+f/4AH//+AB//j//8AAD//n/8AAAAAAAP/8///AAA//z//AAAAAAAB//H//wAAP/8//gAAAAAAAf/5//8AAD/+f/wAAAAAAAD/+f//AAA//n/8AAAAAAAA//z//wAAP/x/+AAAAAAAAH/8//8AAD/8//gAAAAAAAB//H//AAA//P/wAAAAAAAAP/5//wAAP/j/8AAAAAAAAD/+f/8AAD/4A/AAAAAAAAA/AH//AAA/+HHwAD////AAHhA//wAAP/j84A//////wBx+P/8AAD/x/mD///////wY/z//AAA/8/4h////////Gf8//wAAP/P/I////////xP/v/8AAD/z/wP///////8D/5//AAA/8/+AAAAAAAAAB/+f/wAAP/P/gAAAAAAAAAf/H/8AAD/x/8/////////v/x//AAA/8f/P////////z/4f/wAAP/B/z////////8/8H/8AAD/wP+f////////f8J//AAA/8w/n////////n+Of/wAAP/PD5////////58Hn/8AAD/z8Gf///////+YP5//AAA/8/4H////////gP+//wAAP/P/x//3//+//4f/P/8AAD/5/+D/h///h/4P/z//AAA/+f/gAA///4AAH/8//wAAP/n/8AAP///AAD//P/8AAD/5//gAH///4AB//z//AAA/ePz8AH////gA/P5//wAAP3z+fwH////+A/j+e/8AAD98/j/////////x/nv/AAAvfH4f////////4fx7/wAAL35/B////////8P8+98AAC9+fwP///////8D+PvfAAAvPj+Af//////8B/n73wAALz8/4B//////4B/5898AAC8/H/gf/////+B/8/PfAAAvH5////////////Pz3wAAL5+P///////////n598AACePz///////////x+efAAAnz+f//////////8/PnwAAI8fj//////////+Pjx8AADPj8///////////H58/AAAx+fn//////////j8+PwAAOPz4//////////58/H8AADx//H/////////8+/z/AAA+P/4/////////+P/5/wAAPx//H/////////H/4/8AAD/H/4/////////j/8//AAA////H////////x////wAAP///4////////w////8AAD////D///////4/////AAA////8f//////8f////wAAP////h//////8P////8AAD////+H/////8P/////AAA/////wf////8P/////wAAP/////B////8H/////8AAD/////8D///4P//////AAA//////4B/+AP//////wAAP//////wAAAf//////8AAD///////4AD////////AAA//////////////////wAAP/////////////////8AAA=",
+		"icon33": "data:image/bmp;base64,Qk3KBAAAAAAAAD4AAAAoAAAAYAAAAGEAAAABAAEAAAAAAIwEAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD//////////////////////////////////////////////////////wAAf///////////4AAAB///////////gAAAAP/////////8AAAAAB/////////wAAAAAAf////////AAAAAAAH///////8AAAAAAAD///////4AAAAAAAA///////gAAAAAAAAf//////AAAAAAAAAH/////+AAAAAAAAAD/////8AAAAAAAAAB/////4AAAAAAAAAA/////wAAAAAAAAAAf////gAAAAAAAAAAP////AAAAAAAAAAAH///+AAAAAfwAAAAD///8AAAAP//AAAAD///4AAAA///4AAAB///4AAAH///+AAAA///wAAAf////gAAAf//wAAA/////4AAAf//gAAB/////8AAAP//AAAH/////+AAAP//AAAP/+AD//AAAH/+AAAf/wAAf/gAAH/+AAAf/AAAH/wAAD/8AAAf8AAAD/wAAD/8AAAf4AAAA/wAAB/8AAAfwAAAAfgAAB/4AAAPgAAAAPAAAB/4AAAAAAAAAAAAAA/4AAAAAAAAAAAAAA/wAAAAAAAAAAAAAA/wAAAAAAAAAAAAAAfwAAAAAAAAAAAAAAfwAAAAAAAAAAAAAAfwAAAAAAAAAAAAAAfgAAAAAAAAAAAAAAfgAAAAAAAAAAAAAAfgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAPgAAAAAAAAAAfAAAfgAAAAAAAAAB/gAAfgAAA/AAAAAH/gAAfwAAB/wAAAA//gAAfwAAD/4AAAD//gAAfwAAH/8AAAP//gAAfwAAP/8AAA///AAA/wAAP/+AAD//8AAA/4AAP/+AAf//gAAA/4AAP/+AA///AAAA/4AAP/+AAP//wAAB/8AAP/+AAD//8AAB/8AAP/8AAA///AAD/+AAH/8AAAP//gAD/+AAD/4AAAD//gAD//AAB/wAAAAf/gAH//AAA/AAAAAH/gAH//gAAAAAAAAB/gAP//gAAAAAAAAAfAAP//wAAAAAAAAAAAAf//wAAAAAAAAAAAA///4AAAAAAAAAAAA///8AAAAAAAAAAAB///+AAAAAAAAAAAD///+AAAAAAAAAAAH////AAAAAAAAAAAP////gAAAAAAAAAAf////wAAAAAAAAAAf////4AAAAAAAAAA/////8AAAAAAAAAD/////+AAAAAAAAAH//////gAAAAAAAAP//////wAAAAAAAAf//////8AAAAAAAB///////+AAAAAAAH////////gAAAAAAP////////4AAAAAA/////////+AAAAAH//////////wAAAAf//////////+AAAD////////////8AB//////////////////////////////////////////////////////8=",
+		"icon34": "data:image/bmp;base64,Qk1OBgAAAAAAAD4AAAAoAAAAZQAAAGEAAAABAAEAAAAAABAGAADDDgAAww4AAAAAAAAAAAAAAAAAAP///wD////////////////4AAAA////////////////+AAAAP////////////////gAAAD///////AAB//////4AAAA//////8AAAB/////+AAAAP/////4AAAAD/////gAAAD/////wAAAAAH////4AAAA/////wAAAAAAf///+AAAAP////wAAAAAAB////gAAAD////4AAAAAAAH///4AAAA////4AAAAAAAA///+AAAAP///8AAAAAAAAD///gAAAD///8AAAAAAAAAf//4AAAA///+AAAAAAAAAD//+AAAAP///AAAAAAAAAAf//gAAAD///gAAAAAAAAAD//4AAAA///wAAAAAAAAAAf/+AAAAP//4AAAAAAAAAAD//gAAAD//8AAAAAAAAAAAf/4AAAA//+AAAAAfwAAAAD/+AAAAP//gAAAB//4AAAAf/gAAAD//wAAAD///gAAAH/4AAAA//4AAAD////AAAA/+AAAAP/8AAAD////8AAAH/gAAAD//AAAD/////gAAB/4AAAA//gAAB/////8AAAP+AAAAP/4AAA//////wAAB/gAAAD/8AAAf/4AP/+AAAf4AAAA//AAAP/wAAf/wAAD+AAAAP/gAAH/wAAB/8AAA/gAAAD/4AAB/4AAAH/AAAP4AAAA/8AAAf4AAAA/wAAB+AAAAP/AAAD8AAAAH4AAAfgAAAD/wAAAeAAAAA8AAAD4AAAA/4AAAAAAAAAAAAAA+AAAAP+AAAAAAAAAAAAAAPgAAAD/gAAAAAAAAAAAAAB4AAAA/wAAAAAAAAAAAAAAeAAAAP8AAAAAAAAAAAAAAHgAAAD/AAAAAAAAAAAAAAB4AAAA/wAAAAAAAAAAAAAAeAAAAP8AAAAAAAAAAAAAADgAAAD/AAAAAAAAAAAAAAA4AAAA/gAAAAAAAAAAAAAAOAAAAP4AAAAAAAAAAAAAADgAAAD+AAAAAAAAAAAAAAA4AAAA/gAAAAAAAAAAAAAAOAAAAP4AAAAAAAAAAAAAADgAAAD+AAAAAAAAAAAAAAA4AAAA/gAAAAAAAAAAAAAAOAAAAP4AAAAAAAAAAAAAADgAAAD+AAAAAAAAAAAAAAA4AAAA/gAAAAAAAAAAAAAAOAAAAP4AAAAAAAAAAAAAADgAAAD/AAAAAAAAAAAAAAA4AAAA/wAAAAAAAAAPwAAAeAAAAP8AAAAAAAAAP/AAAHgAAAD/AAAAAAAAAH/4AAB4AAAA/wAAAAAAAAB//AAAeAAAAP+AAA//+AAA//wAAHgAAAD/gAAf//wAAP/8AAD4AAAA/4AAH//8AAD//gAA+AAAAP+AAB///AAB//4AAPgAAAD/wAAf//wAAP/+AAH4AAAA/8AAH//8AAD//AAB+AAAAP/gAA//+AAA//wAAfgAAAD/4AAAAAAAAH/8AAP4AAAA/+AAAAAAAAB/+AAD+AAAAP/wAAAAAAAAP/AAB/gAAAD/8AAAAAAAAA/AAAf4AAAA//gAAAAAAAAAAAAP+AAAAP/4AAAAAAAAAAAAD/gAAAD//AAAAAAAAAAAAB/4AAAA//4AAAAAAAAAAAA/+AAAAP/+AAAAAAAAAAAAP/gAAAD//wAAAAAAAAAAAH/4AAAA//+AAAAAAAAAAAD/+AAAAP//wAAAAAAAAAAA//gAAAD//+AAAAAAAAAAAf/4AAAA///gAAAAAAAAAAP/+AAAAP//8AAAAAAAAAAH//gAAAD///gAAAAAAAAAD//4AAAA///+AAAAAAAAAB//+AAAAP///wAAAAAAAAB///gAAAD///+AAAAAAAAA///4AAAA////wAAAAAAAAf//+AAAAP////AAAAAAAAf///gAAAD////4AAAAAAAP///4AAAA/////gAAAAAAP///+AAAAP////+AAAAAAP////gAAAD/////4AAAAAP////4AAAA//////wAAAAf////+AAAAP//////gAAA//////gAAAD///////wAH//////4AAAA////////////////+AAAAP////////////////gAAAD////////////////4AAAA",
+		"icon35": "data:image/bmp;base64,Qk3OAwAAAAAAAD4AAAAoAAAAUAAAAEwAAAABAAEAAAAAAJADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//4AA/4AAAH//AAD/8AAAAAAAAA//AAD/4AAAAAAPAAP/AAD/AA/wAAf//AD/AAD+Af//8AD/z8B/AAD8D////wA/gHA/AAD4P/////APgBwfAADwf/////8PgAcPAADx////////gAOHAADh////////4AGHAADD/////////gDDAADD/////////4BjAADH/////////8BhAADH/////n///+AhAADH////8A////AxAADH////4Af///AxAADH////wAP///gxAADH////g+H///gxAADH////h/D///ghAADD////j/D///xhAADD////j/j////jAADh////n/n////DAADh//8B//+A+P/HAADw/z4A//8AOD+HAAD4PBwEf/4CPB8PAAD8CBgOP/4DHgwfAAD+AHgAP/4BHwA/AAD/APgAP/wAD4B/AAD/wfgAP/wADcD/AADz4/jgP/w4CEP/AADj4/jwP/54GGP/AADBw/xgP/4wGGP/AAAAR/4Af/8AOGP/AAAAR/8A//+AeGP/AADjw//D///h+GP/AADj4///////+GP/AADz4///////+EP/AAD/4f//////+Ef/AAD/8P/Af//5+Ie/AAD/+D4AP//4fwcfAAD/+BwB//h4fg8fAAD//AAP//AcPB8fAAD//wB///AOADgHAAD//8D///gHAHBDAAD/j/H///4DAfgDAAD/j/H///+Bj/4PAAD/j+P////Bh/8fAAD/B+H////Ah/8fAAD/B/H////gh/8fAAD8IfH////gh8f/AADgcDD////gh8f/AADgeDh////gh8f/AAD4IHg////wD4f/AAD+A/wf////DwP/AAD/B/4B///+DgH/AAD/h/8AH//+EDAfAAD/j+fAB//8MHgfAAD/j+f8A//4cDAfAAD/z+f/gf/g/gH/AAD//8P/4P/h/wP/AAD//8P/8P/B/4f/AAD//wD/+P8D/8f/AAD//Bg/+H4Of8f/AAD//Bg//Hwef8f/AAD//wD//Hg8P///AAD//8P//HBwD///AAD//8P//GDwD///AAD//8f//AH8P///AAD//+f/+AP+f///AAD//+f//A/+f///AAD//////B//////AAD//////n//////AAD/////////////AAD/////////////AAD/////////////AAD/////////////AAA=",
+		"icon36": "data:image/bmp;base64,Qk0GAgAAAAAAAD4AAAAoAAAAPAAAADkAAAABAAEAAAAAAMgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////8P//4AAA///w//gAAAAB//D/wAAAAAA/8P8AAAAAAA/w/AAAAAAAA/D4AAAAAAAB8PAAAAAAAAHw8AAAAAAAAPDgAAAAAAAAcOAAAB8AAABw4AAAf+AAAHDgAAH/8AAAcOAAA//4AABw4AAD//wAAHDgAAPx/AAA8PAAAAAAAADw+AAAAAAAAfD8AAAAAAAD8P8ADwAeAAfw/8AfgD8AP/D/gD/Af4A/8P+AP+B/wB/w/4A/4H/AH/D/AD/gf8Af8P8AP+B/wB/w/4A/4H+AH/D/gB/Af4A/8P+AH4A/AD/w/8AGAAwAf/D/4AAAAAD/8P/wAAAAB//w//4AAAAH//D//gAAAAf/8P/+AAAAB//w//4AAAAH//D//gAAAAf/8P/+AAAAB//w//4AAAAP//D//gAAAB//8P//AAAAP//w//8AAAP///D//4AAA///8P//4AAD///w///4AAP///D///8AA///8P///8AD///w////4Af///D////wB///8P////AP///w////8B////D////gP///8P///+B////w////4f////D/////////8P/////////w//////////A=",
+		"icon37": "data:image/bmp;base64,Qk2uAQAAAAAAAD4AAAAoAAAAMAAAAC4AAAABAAEAAAAAAHABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////8AAP///////wAA////AD//AAD///gAD/8AAP//wAAD/wAA//+AAAD/AAD//gAAAH8AAP/8AAAAPwAA//gAAAA/AAD/8AAAAZ8AAP/wAAAH/wAA/+AAAAf/AAD/4AAAD/8AAP/AAAAP/wAA/8AAAA//AAD/gAAAD/8AAP+AAAAP/wAA/4AAAAf/AAD+AAAAA/8AAPgAH8AA/wAA8AA/4AB/AADwAH+wAH8AAOAAABAAPwAA4AAAGAA/AADhAAAABD8AAOMAAAAGPwAA/wDAAAf/AAD/gOBsB/8AAP+B4HAH/wAA/4DgGA//AAD/gAAAD/8AAP+AAAAP/wAA/8AAAB//AAD/wAAAH/8AAP/gAAA//wAA//AAAD//AAD/8AAAf/8AAP/4AAD//wAA//4AA///AAD//4AH//8AAP//4D///wAA////////AAD///////8AAP///////wAA////////AAD///////8AAA==",
+		"icon38": "data:image/bmp;base64,Qk2WAQAAAAAAAD4AAAAoAAAAMAAAACsAAAABAAEAAAAAAFgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////8AAP///wB//wAA///wAA//AAD//8AAA/8AAP//AAAA/wAA//4AAAB/AAD//AAAAD8AAP/4AAAAPwAA//AAAAGfAAD/4AAAB/8AAP/gAAAH/wAA/8AAAA//AAD/wAAAD/8AAP+ADwAP/wAA/4AfgA//AAD/AB+AD/8AAP4AH4AH/wAA+AAfgAH/AADwAD/AAP8AAOAAf+AAfwAAwADgcAA/AADAAYAIAD8AAMAAAAAAPwAAxgAAAAY/AAD/AAA4B/8AAP8AAHwP/wAA/wIg7g//AAD/AeDGD/8AAP8BgO4P/wAA/wAAfA//AAD/gAA4D/8AAP+AAAAf/wAA/4AAAB//AAD/wAAAP/8AAP/AAAA//wAA/+AAAH//AAD/8AAA//8AAP/4AAH//wAA//4AA///AAD//4AP//8AAP//+P///wAA////////AAD///////8AAA==",
+		"icon39": "data:image/bmp;base64,Qk2OAQAAAAAAAD4AAAAoAAAAKwAAACoAAAABAAEAAAAAAFABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////+AAAP////P/4AAA////wD/gAAD////4j+AAAP////zn4AAA/////vPgAAD////++eAAAP//8AD84AAA//+AAfzgAAD//h///uAAAP/8///+4AAA//n///7gAAD/8////uAAAP5n/4/+4AAA/A//J/zgAAD5n/9x+eAAAPn//3/z4AAA+f//P+fgAAD9//+fz+AAAPz//8ff4AAA/j//95/gAAD/P+f/v+AAAP8/gf+/4AAA/z+A/7/gAAD/PwB/vuAAAP8/vP+8YAAA5z///7xgAADHP///veAAAIM9vt+/4AAAg7w+H7/gAAD3nn8/P+AAAP+f//874AAA/9///3DgAAD/z//+cGAAAP/n//zw4AAA//P/+fPgAAD/+f/x/+AAAP/8f+f/4AAA//4OD//gAAD//8B//+AAAP//////4AAA///////gAAA=",
+		"icon40": "data:image/bmp;base64,Qk02AgAAAAAAAD4AAAAoAAAAPAAAAD8AAAABAAEAAAAAAPgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD////g////8P///AAD///w///h//h///D//4///x//8P/+fAA/x//w//jh/8fx//D/84//8/z/8P/nB//9/n/w/84D9/5/P/D/nAH7/3+f8P84ADz/P8/w/nAAAD4f5/D+4AAAAB/z8PzAAAAAD/nw+cAfwAAP+fD7gD//wAf88POAP//8B/7w9wB///gH/nD2AAAP+Af+cOY///5wB/8w77///8AH/zDv///+Bgf/sO////n5j/+Qz///8/wf/5Df///3/z//kN+B/+/Hv/+Q335/74Hf/9Defz/PAM//0N7/v98A7//Q3v/f3wBv/9Dc/c/eAGf/0N3w794AN//QzfBv3nA3/9Dt8HffeDf/kO3wN994M/+Q7PA33zwz/5Dm9jPPvDP/sPb3M+/Ic/+w9vu77+D3/zD6fTvn+/f/cPt+e/f/9/5w/T/z8//n/nD8v/P7/+/88P6f9/3/z/zw/0/3/v/f+fD/J+f/Pz/78P+T7/+Ef/Pw/8jP//H/5/D/5h/////P8P/7////95/w//z+f8DnP/D+/n2/vs5/8P5/m9++iP/w/z/t150T//D/D/zXbgf/8P+H/xgwP//w/8H//wB///D/wAf/gP//8P/wD/+D///w//g///////D/////////8P/////////w//////////A=",
+		"icon41": "data:image/bmp;base64,Qk22AQAAAAAAAD4AAAAoAAAALQAAAC8AAAABAAEAAAAAAHgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////gAAP//+AP/+AAA///gAP/4AAD//4AAP/gAAP//AAAf+AAA//4AAA/4AAD//AAAB/gAAP/4AAAH+AAA//gAAAP4AAD/8AAAA/gAAP/wAAAB+AAA/+AAAAH4AAD/4AAAAfgAAP/AAAAB+AAA/4AAAAH4AAD/gAAAAPgAAP8AAAAA+AAA/gAAAAD4AAD8AAAAAPgAAPgAAAAA+AAA8AAAAAD4AADgDAAAAPgAAOAcAAAA+AAA4DwAAED4AADgfAAQYPgAAPv8CBBg+AAA//wIEGD4AAD//AgQYfgAAP/8CBB/+AAA//wIEH/4AAD//Aw9//gAAP/8Dn//+AAA//wP///4AAD//A////gAAP/8D///+AAA//wP///4AAD//A////gAAP/8D///+AAA//wP///4AAD//A////gAAP/8D///+AAA//wP///4AAD//g////gAAP//P///+AAA///////4AAD///////gAAP//////+AAA",
+		"icon42": "data:image/bmp;base64,Qk2mAQAAAAAAAD4AAAAoAAAALQAAAC0AAAABAAEAAAAAAGgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////gAAP//AD//+AAA//wAB//4AAD/8B/o//gAAP/gAD9/+AAA/8AAlp/4AAD/gAABj/gAAP8AP8BH+AAA/gD/+CP4AAD8A//8E/gAAPwH//8B+AAA+A///4D4AAD4H///wPgAAPA////AeAAA8D///+B4AADwf///8HgAAOB////weAAA4P////B4AADw////+HgAAPn////4eAAA+f////j4AAD///////gAAP//////+AAA///////4AAD///////gAAP//////+AAA///////4AAD///////gAAOP/P8//eAAA4/4fz/84AADB/B/H/zgAAOBwH8P/GAAA4AAfw/4YAADwAB/A/hgAAPgAP8B4OAAA/AB/4AA4AAD8AP/gADgAAPoB/+AAeAAA/s//4AB4AAD////wAPgAAP////wB+AAA/////wf4AAD///////gAAP//////+AAA///////4AAA=",
+		"icon43": "data:image/bmp;base64,Qk12AQAAAAAAAD4AAAAoAAAAKAAAACcAAAABAAEAAAAAADgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////wAAAP//x///AAAA/7gAN/8AAAD/QACF/wAAAP0D/wB/AAAA+h//4D8AAADwH//gHwAAAOAHh4APAAAAwAAAAAcAAADAAAAABwAAAIAAAAADAAAAgAAAAAMAAACAAAAAAQAAAAAAAAABAAAAAAAAAAEAAAAAD//gAQAAAIH///+DAAAA//////8AAAD//////wAAAP//////AAAA//////8AAAD//////wAAAP8/////AAAA+Af///8AAADwA///DwAAAPAD/4ADAAAA4AH+AA8AAADgAfwAfwAAAMAA/gf/AAAAwAD/AH8AAADAAP+AHwAAAMAB/+APAAAA4AH//v8AAADgAf///wAAAPAD////AAAA+Af///8AAAD8D////wAAAP//////AAAA//////8AAAA=",
+		"icon44": "data:image/bmp;base64,Qk2GAQAAAAAAAD4AAAAoAAAAMgAAACkAAAABAAEAAAAAAEgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD////////AAP///A///8AA//+AAH//wAD//gAAD//AAP/4AAAD/8AA/6AAAAH/wAD/QA/8AH/AAP6Af/+AP8AA/AH//+AfwAD8AP//wA/AAPgAPh+AD8AA8AAAAAAHwADwAAAAAAPAAPAAAAAAA8AA4AAAAAADwADgAAAAAAHAAOAAAAAAAcAA4AAAAAABwADwAAAAAAHAAPgP///wA8AA////////wAD////////AAP///////8AA////////wAD////////AAP//////98AA+//////nwADx/////+PAAPH/////h8AA8P////8PwADwf/P5+B/AAPA/4/AAP8AA+A+D8AD/wAD8AAf4B//AAP4AH/wAA8AA/4A//wAHwAD/////wA/AAP///////8AA////////wAD////////AAP///////8AA",
+		"icon45": "data:image/bmp;base64,Qk0eAgAAAAAAAD4AAAAoAAAAKAAAADwAAAABAAEAAAAAAOABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/+AH//wAAAP/B+H//AAAA/4/+P/8AAAD+P//P/wAAAPx//+f/AAAA/P//8/8AAAD5///5/wAAAPP///z/AAAA8////n8AAADn////PwAAAOf///+fAAAA7////88AAADv////5wAAAO/////zAAAA7/////sAAADv///z+QAAAO////n7AAAA7////PsAAADv///+cwAAAOf///8HAAAA9//+/z8AAADz//8/nwAAAPn//5+fAAAA+f//z78AAAD8///HPwAAAP5/3+B/AAAA/z/P8/8AAAD/n+P7/wAAAP/P8fv/AAAA/+f58/8AAAD/8/xj/wAAAP/5/gf/AAAA//z/P/8AAAD//H+P/wAAAP/5P8f/AAAA//Of4/8AAAD/88/z/wAAAP/n5/n/AAAA/+/z/P8AAAD/z+H+fwAAAP/fzP5/AAAA/9/Ofn8AAAD/3588/wAAAP/Pn4H/AAAA/+I/w/8AAAD/+PD//wAAAP//4n//AAAA///GP/8AAAD//48f/wAAAP//n5//AAAA//8/z/8AAAD//3/v/wAAAP//f+//AAAA//8/z/8AAAD//4Af/wAAAP//wj//AAAA//////8AAAD//////wAAAP//////AAAA//////8AAAA=",
+		"icon46": "data:image/bmp;base64,Qk3qAgAAAAAAAD4AAAAoAAAAQQAAADkAAAABAAEAAAAAAKwCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////4AAAAD//////////4AAAAD///+AH////4AAAAD///gP4f///4AAAAD///gP4f///4AAAAD//+D//x///4AAAAD//4f//+///4AAAAD//h///////4AAAAD//D///////4AAAAD/+H///////4AAAAD/8f///////4AAAAD/8f///////4AAAAD/4///+H///4AAAAD/h///gP///4AAAAD/j///4f///4AAAAD/D////////4AAAAD/H////////4AAAAD+H////////4AAAAD+H////////4AAAAD+f////////4AAAAD+f////////4AAAAD8f////////4AAAAD8f/////4D/4AAAAD8//////wAf4AAAAD8//+Af/gAf4AAAAD8//+Af/gAf4AAAAD8//wAH/AAP4AAAAD8//gAB/AAH4AAAAD8//AAA/AAH4AAAAD4//AAA+AAD4AAAAD4/+AAAeAAD4AAAADwf+AAAeAAD4AAAADwf+AAAeAAD4AAAADwf+AAAOAAB4AAAADyf+AAAOAAB4AAAADyH+AAAOAAD4AAAAD4H+AAAAAAf4AAAAD4H+AAAP///4AAAAD8D+AAB////4AAAAD8D+AAB////4AAAAD+AAAAf//8/4AAAAD/ggA//////4AAAAD/4//////7/4AAAAD/8f/////3/4AAAAD/8H/////v/4AAAAD/+D/////f/4AAAAD/+D/////f/4AAAAD//B////8//4AAAAD//4f///z//4AAAAD//8D///H//4AAAAD///Af/wf//4AAAAD///wAAB///4AAAAD////AAf///4AAAAD////AAf///4AAAAD//////////4AAAAD//////////4AAAAD//////////4AAAAA=",
+		"icon47": "data:image/bmp;base64,Qk2+AQAAAAAAAD4AAAAoAAAAQQAAACAAAAABAAEAAAAAAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////4AAAAD//////////4AAAAD//////////4AAAAD//////4Af/4AAAAD//wD//x8D/4AAAAD/+B5//z/w/4AAAAD/wf8//n/+P4AAAAD/j/+f/n//H4AAAAD+P/+f/P//z4AAAAD8f//P/P//54AAAAD4///v+f//84AAAAD5///n+f//+4AAAADz///n+///+YAAAAD3///3+///+YAAAAD3///z8///+YAAAADn///z8///+YAAAADn///z8///+4AAAAD3///78/+P84AAAADz/n/78/+Dx4AAAAD5+H/78/+QH4AAAAD8AH/78/+f/4AAAAD+B3/z+/+f/4AAAAD//3/z+f+//4AAAAD//z/z+f8//4AAAAD//z/n/P5//4AAAAD//5/n/nx//4AAAAD//8/P/gD//4AAAAD//+Af/4P//4AAAAD///h//////4AAAAD//////////4AAAAD//////////4AAAAD//////////4AAAAA=",
+		"icon48": "data:image/bmp;base64,Qk2mAQAAAAAAAD4AAAAoAAAAMAAAAC0AAAABAAEAAAAAAGgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////8AAP///////wAA/////4//AAD////+A/8AAP////wB/wAA////+AD/AAD////w8P8AAP///+H4/wAA///wA/j/AAD//4AB8P8AAP/+AABw/wAA//wAAAD/AAD/8D/4AP8AAP/wf/4B/wAA/+H//wH/AAD/w///wf8AAP/H///h/wAA/4///+D/AAD/j///8P8AAP+P///4fwAA/4////h/AAD/n////D8AAP+f///8PwAA//////wfAAD//////h8AAP//////PwAA//j/4///AAD/8H/A//8AAP/gf8B//wAA/+B/wB//AAD/wH/AD/8AAP+AP8AH/wAA/wA/wAP/AAD/AB/AAf8AAP4AH8AB/wAA/AAf4AH/AAD8AA/gAP8AAPgAD+AA/wAA+AAP4AH/AAD4CA/gA/8AAPgcD/B//wAA/DwP+P//AAD//h////8AAP///////wAA////////AAA=",
+		"icon49": "data:image/bmp;base64,Qk2OBAAAAAAAAD4AAAAoAAAAYAAAAFwAAAABAAEAAAAAAFAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD////////////////////////////////////////////////////8f//////////////AAAAAf/////////+AAAAAD/////////4AAAAAAf////////wP/APwAH////////g//8H/gA////////h//+H/+Af///////D///H//gH///////H//+H//4D//////+H//+H//+A//////+P///H///gf/////+P///D///wP/////8P///D///8H/////4P//+H///+D/////wP//+H////B/////gP///D////g/////AP///D////wf///+CP///D////4P///+GH//+D////8P///8HH//+Af///+H///4PH///AH///+D///4fD+f/4B////D///w/j8B/+A////h///w/h4AP/wf///g///h/x4AA/4f///w///h/x4cAH8f///4f//D/x4fgAYf///4f//D/x4f+AA////8f/+H/x4//wA////8P/+H/h4///D////8P/+P/hw////////+H/8P/hh////////+H/8P/gB////H///+H/8f/wD///+H////H/8f/4H///4H////D/4f//////AP////D/4f///4AAAf////D/4f///4AAB/////D/4f///4AAP/////j/4/////AD//////j/4/////////////j/4/////////////h/4/////////////h/4/////////////h/4/////////////h/4/////////////j/4////////8f///j/4////////4P///j/4f///////wH///j/4f///P///wD///D/4f//8D///wD///D/4f//8D///wD///D/8f//4B///wD///D/8P//4B///wD///H/8P//4B///wD//+H/8P//4B///wH//+H/+H//4B///4H//+P/+H//4B///8f//8P/+H//8B//8////8P//D//8D//8D/x/4f//D//+H//4AAA/4f//h//////8AAB/w///h///////gAD/w///w/x//j///A//h///wfw/+D//////h///4fwP4D//////D///8P4AAH/////+D///8H8AAf/////8H///+D/AB//////8P////D/+f//////4f////B/////////wf////g/////////g/////wf////////B/////4H///////8D/////8D///////4H/////+B///////wP//////gf//////A///////wH/////+B///////4B/////4D///////+Af////AP////////gD///4Af////////4AP/+AB/////////+AAAAAP//////////wAAAA///////////+AAAP////////////8AH//////////////////////////////////////////////////////8=",
+		"icon50": "data:image/bmp;base64,Qk1OAgAAAAAAAD4AAAAoAAAAOAAAAEIAAAABAAEAAAAAABACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////AP///wH///8A///8AP///wD/gfh8PwP/AP8AcP4cAf8A/jwB/wB4/wD+fwf/wfz/AP5/////+P8A/j/////4/wD/P/////n/AP8f////8f8A/5/////z/wD/n////+P/AP+P////4/8A/4/////n/wD/z////+f/AP/P////5/8A/8/////H/wD/z////8f/AP/H////x/8A/4/////H/wD/D////+H/AP4/////8P8A/H/////4fwD4//////w/APH//////h8A4///////HwDj//////+PAMf//////88Az8f5/j/HxwDPh/gAP8PnAM4H8AA/wecAxAfwOB/ARwDAZ+H/H8wPAOHn5//Pzh8A/+f////P/wD/5////8//AP/n8P4fz/8A/+fgfA/P/wD/5+B8D8//AP/n4HwPz/8A/+fB/w+P/wD/48f/x5//AP/zz//nn/8A//H///8f/wD/4f///x//AP/g///+D/8A/8B///wP/wD/zD//+Ef/AP+OH//w5/8A/48P/+Hn/wD/ngP/gOP/AP+cAHgIY/8A/5jwAD5j/wD/mf4A/iP/AP+B////B/8A/4P///8H/wD/w////4f/AP/D////j/8A/+P///+P/wD/8////5//AP////////8A/////////wD/////////AP////////8A/////////wA=",
+		"icon51": "data:image/bmp;base64,Qk0+AgAAAAAAAD4AAAAoAAAAPgAAAEAAAAABAAEAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////P/////////8//////////z//////////P/////////8//gf//8D//z/8Z///jP//P/zn//+cf/8//Of//5z//z/8B///gP//P+AAAAAAH/8/gAAAAAAD/z4P/////8H/PD//////+P848AAAAAAcfzjAAAAAAAZ/OAf//8A/wH88H/4Hhz/w/z9//AAPH/3/P//48D+f//8///H//5///z//8///j///P/wD///P//8/4Af//8///z/B////x///P4f////n//8/j////+f//z+H////5///P8H////j//8/8P////P//z/4f///8///P/4////z//8//j////B//z//H///8B//P/+f///4B/8//4////nD/z//z///+eP/P/jH///58f8/4AP///j5/z/gB///+Bn/P+f////4Af8/4///4fjD/z/h///h/P//P/B//+/8//8//AD///z//z//AP//HP//P//x/x8M//8///n/Dgz//z//+f4PDP//P//4/w+Y//8///j/n/n//z///P//+f//P//8f//x//8///5///P//z///j//4///P///H//H//8///+P/4///z///8P+H///P///4CA///8////4AP///z////4D////P/////////8//////////z//////////A==",
+		"icon52": "data:image/bmp;base64,Qk1iAwAAAAAAAD4AAAAoAAAARQAAAEMAAAABAAEAAAAAACQDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAD//AP///4B//gAAAD/8AD///gAf/gAAAD/4HA//+BwP/gAAAD/w/4f/8P+H/gAAAD/h/8P/4f/D/gAAAD/H/+H/w//x/gAAAD+H//H/h//w/gAAAD+P//j/j//4/gAAAD8f//x/H//8fgAAAD4///x/H//8fgAAAD4///4+P//+PgAAAD5///4+P//+PgAAADx///8+f///HgAAADx///8cf///HgAAADz///8cf///HgAAADj///+c////ngAAADj///+c////jgAAADj///+I////jgAAADn///+I////jgAAADn//wGI////jgAAADn//ACI////zgAAADn/+AAJ//4HzgAAADn/+AAJ//gBzgAAADj/8AAJ//AAzgAAADh/8AAI/+AAzgAAADg/8AAI/+AADgAAADgf8MAI/8AADgAAADiH8eAI/8AADgAAADjD8eAY/8AADgAAADjg+MAc/8OADgAAADz4GAAcf8eAHgAAADz+AAAcH8OAHgAAADx/gAAcA+EAHgAAADx//AY+AGAAPgAAAD4///4+OAAAPgAAAD4///x+PwAAPgAAAD8f//x/H/gIfgAAAD8f//j/j//4fgAAAD+P//D/j//4/gAAAD/H//H/x//x/gAAAD/D/+P/4//j/gAAAD/h/4f/4f/D/gAAAD/wfw//+H8H/gAAAD/8AB///AAf/gAAAD/+AH///wA//gAAAD//w////+P//gAAAD///////////gAAAD///////////gAAAD////H/////ngAAAD///8D////+fgAAAD+D/gP////4/gAAAD/wAAf////j/gAAAD//gH////4H/gAAAD///////4Af/gAAAD//////8AD//gAAAD//////8Af//gAAAD//////8H///gAAAD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAA=",
+		"icon53": "data:image/bmp;base64,Qk0+AwAAAAAAAD4AAAAoAAAARwAAAEAAAAABAAEAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////4AAAD///////////4AAAD///////////4AAAD///////////4AAAD///////////4AAAD//4D///+Af/4AAAD//gA///4AH/4AAAD/+BwP//gcD/4AAAD/8P+H//B/h/4AAAD/4f/D/+H/4/4AAAD/w//h/8P/8f4AAAD/h//w/8f/+P4AAAD/j//4/4//+H4AAAD/H//8f5///H4AAAD/H//8fx///j4AAAD+P//+Pz///j4AAAD+P//+Pj///z4AAAD+f///Hj///x4AAAD8f///HH///x4AAAD8f///nH///54AAAD8////nH///44AAAD8////jP///44AAAD4////jP///44AAAD4////iP///84AAAD4////iP///84AAAD4////yP///84AAAD4////yP///84AAAD4////yP///84AAAD4////yP///84AAAD4////yP///84AAAD4////iP///84AAAD4/wf/iP4P/84AAAD4/AH/iPgD/84AAAD48AD/jPAA/44AAAD84AB/nGAA/44AAAD8YAA/nEAAf54AAAD8QAA/HEAAP54AAAD8QAA/HgAAPx4AAAD+AAAfPgAAPx4AAAD+A4AePgeAPj4AAAD/B8AePw+APj4AAAD/B8A8fw/APH4AAAD/h8A8f4+APH4AAAD/g4A4/4eAeP4AAAD/wABx/8AAcP4AAAD/4ADj/+AA4f4AAAD/8AGD//ADw/4AAAD/+AcH//gHB/4AAAD//AAf//wAH/4AAAD//gA///8AP/4AAAD//8H////B//4AAAD///////////4AAAD///////////4AAAD/z//5//////4AAAD/8D8B/////34AAAD//gAB////+P4AAAD///gf////B/4AAAD//////+AAH/4AAAD//////8AB//4AAAD//////8Af//4AAAD///////////4AAAD///////////4AAAD///////////4AAAD///////////4AAAA=",
+		"icon54": "data:image/bmp;base64,Qk2eAwAAAAAAAD4AAAAoAAAASAAAAEgAAAABAAEAAAAAAGADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////8AAAD///////////8AAAD////wAD////8AAAD///8P/4P///8AAAD///x///h///8AAAD///H///4f//8AAAD//8fgAP/H//8AAAD//58D/x/j//8AAAD//zwD/8f4//8AAAD//vAB//H8f/8AAAD/+eAB//j/P/8AAAD/88AA+/x/n/8AAAD/94AA/f4/z/8AAAD/7wAAfv8/5/8AAAD/zgAAPn+f8/8AAAD/nAAAAB+f+f8AAAD/uAAAAAOf+f8AAAD/OAAAAAAP/P8AAAD/cAA//wAP/v8AAAD+cAB///AP/n8AAAD+4AD///4P/z8AAAD84AAAP//P/z8AAAD94D//w//f/78AAAD9/////3+f/58AAAD9/////w+//58AAAD7////8AM//98AAAD7////5/h//88AAAD7////3/5//88AAAD7//////8//88AAAD7+D//v/+f/+8AAAD784//f//f/+cAAAD77+f/fz/P/+cAAAD77/P/fh/n/+cAAAD73/n+/A/n/+cAAAD73/3+fAf3/+cAAAD734z+fAfz/+cAAAD73wb+fAPz/+cAAAD73wb/fAP7/+cAAAD73wN/fIP7/+cAAAD53wN/fMP7/+8AAAD93wN/PuP7/+8AAAD932N/vuP7/88AAAD83/N/nwP7/88AAAD+7/N/34fz/88AAAD+74J/z8fz/58AAAD/Z8B/7//3/58AAAD/d8B89//n/58AAAD/u4H8A//n/z8AAAD/mgf4AD/P/z8AAAD/2B/7wAef/n8AAAD/4H///gAP/n8AAAD/4f///+AP/P8AAAD/w/////4H+f8AAAD/w//////n+f8AAAD/+f//////8/8AAAD//P//////5/8AAAD//n//////z/8AAAD//z//////n/8AAAD//5//////P/8AAAD//+/////8f/8AAAD///P////5//8AAAD///z////j//8AAAD///8///+P//8AAAD////H//w///8AAAD////4HwH///8AAAD/////wH////8AAAD///////////8AAAD///////////8AAAD///////////8AAAD///////////8AAAD///////////8AAAD///////////8AAAA=",
+		"icon55": "data:image/bmp;base64,Qk2eAwAAAAAAAD4AAAAoAAAARQAAAEgAAAABAAEAAAAAAGADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////gAAAD///////////gAAAD////+H/////gAAAD///+AAD////gAAAD///w//wf///gAAAD//+H//+H///gAAAD//4/gD/x///gAAAD//jw/4H8f//gAAAD//PN//4/P//gAAAD/85//3+Pj//gAAAD/53////n5//gAAAD/zP7/v/r8//gAAAD/m///v/9+f/gAAAD/Nf3///e/P/gAAAD+bf3/f/+fn/gAAAD+3///f+/fz/gAAAD8u/v/f+/Pz/gAAAD5u/v////P5/gAAAD7e/v+///v8/gAAADze//+/9/P8/gAAAD3e//+/9/P+fgAAADne//////f+fgAAADve/////+f/PgAAADve/wB//+//PgAAADPe+f8P/5//vgAAADfv7//x/j//ngAAADf3P//8AP//ngAAADf4///4x///3gAAACf////n+f//zgAAACf////P/P//zgAAAC////+f5n//zgAAAC/+f/+/gT//zgAAAC/xj/9/AJ//zgAAAC/v8/9/AF//7gAAAC/f+f5+AE//7gAAAC+f/P7+AC//7gAAAC+/gv7+ACf/7gAAAC+/AX7+IDf/zgAAACd/AD7+cBf/zgAAADd/AL7/eAf/zgAAADd/AB7/eDP/zgAAADd/AB7/A/P/zgAAADd/cB78P/P/3gAAADt/eA5D//v/ngAAADs/eA8f//P/ngAAADu/eE9///P/ngAAAD2/A+8///f/PgAAAD2YP++///f/PgAAAD7D/++f//f/fgAAAD7P/+/P/+f+fgAAAD9v/+/n/+/+/gAAAD8n/+/z/8/8/gAAAD+3/8/5/5/5/gAAAD/b/9/8fzj5/gAAAD/N/9//AABz/gAAAD/m/7//4APn/gAAAD/zPz//wD/P/gAAAD/5gH//Af+f/gAAAD/88//+B/8//gAAAD/Of//8H/5//gAAAD/wH//4f/j//gAAAD/4B//x//P//gAAAD/+AD/n/8f//gAAAD//wABv/x///gAAAD//+AH/+H///gAAAD////B+A////gAAAD/////Af////gAAAD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAD///////////gAAAA=",
+		"icon56": "data:image/bmp;base64,Qk2+AQAAAAAAAD4AAAAoAAAAPAAAADAAAAABAAEAAAAAAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////8P/////////w//////////D/j/////+H8P8n/////xPw/nP/wB//e/D+8/+Px/958Pxz/z/j/nnw+Pj+f/n8fPD7/jz4feH+cPv/hcWMh/5w+8/hlaQ/jnD4AfmEBP4A8Pw8fTWk8PHw//8JAATD//D//8E/8B//8P//AD/wB//w/nwg+ngx+fD4Ee/4f5wg8PuHz/h/3w5w8/+P+P/P/3Dz/g4848P/cPn4zA/BmH5w/PPEB4GOOPD895QHga898Pz3lAeBrz3w/ue2D4OvmfD+D7f//6fD8P//P///4//w//w////g//D/8A///4B/8P/gAP/8AB/w/8AAAAAAH/D/gAAAAAAP8P+8AAAAAOfw/wcAAAAHB/D/gMAAAAwH8P/8YAAAGf/w//8gAAAz//D//5APwGf/8P//2BBgT//w///MIDCf//D//+ZgEb//8P//80AWf//w///4wBz///D///4Pwf//8P///4/H///w//////////A=",
+		"icon57": "data:image/bmp;base64,Qk3eAgAAAAAAAD4AAAAoAAAAQQAAADgAAAABAAEAAAAAAKACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////4AAAAD//////////4AAAAD//////////4AAAAD/n//////4/4AAAAD+B//wD//wP4AAAAD84//AA//nP4AAAAD88/+P+f/vn4AAAAD58/8f/H/Pn4AAAADx8/x//j/vh4AAAADn8/z8P5/n84AAAADP+fnjR9+P84AAAADP/HmLWc8f+4AAAADP/jmgAs5/84AAAADnHxkLQNj8c4AAAADgD8ErXkHwB4AAAAD45+MAAEfjn4AAAAD/8fM//k/H/4AAAAD/+Pp//g8f/4AAAAD//nBf/Q4//4AAAAD/3wA8HAD//4AAAAD/j458Hzn//4AAAAD/g5/8P/z//4AAAAD/kT/+P/z//4AAAAD/mT8+fv7//4AAAAD/nDwHcDz//4AAAAD/lJwD4Bz//4AAAADgFhgDwBj//4AAAADgChgBgBj//4AAAAD3yAwNuBp//4AAAADzYEg//hp//4AAAAD5gEn9/9t//4AAAAD84k/5z/t//4AAAAD+Bl/35/s//4AAAAD/hn////4//4AAAAD/8Af///A//4AAAAD/+EA//gI//4AAAAD//jwAABw//4AAAAD//g/4D/g//4AAAAD//CP//8Yf/4AAAAD/+Bhz8xwP/4AAAAD/4w/z8/hn/4AAAADwxzP///bxD4AAAADgH5////z4B4AAAADP/x//Pzh+84AAAADP/E5/PzE/+4AAAADP+OZ///OP+4AAAADP8/P78+fH84AAAADh9/jx84/nh4AAAADx8/x7/h/vj4AAAAD98/8P8H/vn4AAAAD88//AAf/nn4AAAAD8R//8P//iP4AAAAD+D//////wf4AAAAD//////////4AAAAD//////////4AAAAD//////////4AAAAA=",
+		"icon58": "data:image/bmp;base64,Qk2+AQAAAAAAAD4AAAAoAAAAMQAAADAAAAABAAEAAAAAAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////+AAP///////4AA///g////gAD//8A///+AAP//jx///4AA//8/j///gAD//n/n5/+AAP/+f+cB/4AA//z/5Dj/gAD//P/g/H+AAP4E/CH+f4AA/ADAAf8/gAD58Afwfz+AAPP8P/w/P4AA8/z//w4/gADn+f//zH+AAOfz///g/4AA5+P//+AHgADv5///8GOAAM/n/j/7+YAA7+YcH3n4gADn5gzOOfyAAOfmDcwZ/IAA8+QP7Bn8gAD45g/8GfyAAPwHH/45/IAA/wf///H5gAD8A///8+GAAPjx///gB4AA8fn//+AfgADz/P//zH+AAOf+P/+OP4AA5/8P/x8/gADn/4H8f5+AAOf/AAD/n4AA5/8eA/+fgADz/j/n/5+AAPH8P+P/n4AA+Hg/4f+fgAD8AX/I/z+AAP8Cf8x+P4AA//5/zgB/gAD//n/Pwf+AAP//f8///4AA//8/n///gAD//54///+AAP//gH///4AA///h////gAA=",
+		"icon59": "data:image/bmp;base64,Qk3qAgAAAAAAAD4AAAAoAAAAQQAAADkAAAABAAEAAAAAAKwCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////4AAAAD//////////4AAAAD//////////4AAAAD////4D////4AAAAD///4AAB///4AAAAD//+AAAAP//4AAAAD//wAAAAB//4AAAAD//gAAAAAf/4AAAAD/+AAP/AAP/4AAAAD/8AA//wAD/4AAAAD/4AB//4AB/4AAAAD/wAD//8AA/4AAAAD/gAH//8AAf4AAAAD/AAH//8AAf4AAAADjAAGB4GAAA4AAAADgAAAAAAAAA4AAAAD4AAAAAAAAD4AAAAD8AAAAAAAAH4AAAAD8AAAAAAAAH4AAAACcAAAAAAAAHIAAAAAAAAAAAAAAAIAAAADgAAAAAAAAA4AAAAD8ABwAAAwAD4AAAAD8AD4AAD8AD4AAAAD8AH4AAD8AD4AAAACAAP8AAD+AAIAAAAAAAP8AAH+AAAAAAAC8AH8AAD+AHoAAAAD8AH4AAD8AH4AAAAD+AD4AAB8AH4AAAAD+ABgAAAwAP4AAAAD+AAAAAAAAP4AAAAD/AAAAAAAAf4AAAAD/AAAAAAAAf4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAAAAAA/4AAAAD/gAAf/AAA/4AAAAD/gAA//gAA/4AAAAD/gAB//wAA/4AAAAD/gAD//4AA/4AAAAD/gAH//8AA/4AAAAD/gAP//+AA/4AAAAD/wAf///AA/4AAAAD/wA////gB/4AAAAD/wB////wB/4AAAAD/4D////8B/4AAAAD/8P/////D/4AAAAA="
+	};
+
+    let layers = [];
+    let layerIdCounter = 0;
+    let activeLayerId = null;
+
+    let canvas = document.getElementById('epd_canvas');
+    let ctx = canvas.getContext('2d');
+
+    const iconsMap = { text: '📝', line: '➖', bitmap: '🖼️', battery: '🔋', calendar: '📅', box: '📦' };
+
+    const LUNAR_INFO = [
+        0x04bd8, 0x04ae0, 0x0a570, 0x054d5, 0x0d260, 0x0d950, 0x16554, 0x056a0, 0x09ad0, 0x055d2,
+        0x04ae0, 0x0a5b6, 0x0a4d0, 0x0d250, 0x1d255, 0x0b540, 0x0d6a0, 0x0ada2, 0x095b0, 0x14977,
+        0x04970, 0x0a4b0, 0x0b4b5, 0x06a50, 0x06d40, 0x1ab54, 0x02b60, 0x09570, 0x052f2, 0x04970,
+        0x06566, 0x0d4a0, 0x0ea50, 0x06e95, 0x05ad0, 0x02b60, 0x186e3, 0x092e0, 0x1c8d7, 0x0c950,
+        0x0d4a0, 0x1d8a6, 0x0b550, 0x056a0, 0x1a5b4, 0x025d0, 0x092d0, 0x0d2b2, 0x0a950, 0x0b557,
+        0x06ca0
+    ];
+
+    let moveInterval = null;
+    let moveTimeout = null;
+    let holdCounter = 0;
+
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+        if(window.event) window.event.currentTarget.classList.add('active');
+        if (tabId === 'tab-simulation') setTimeout(renderAll, 50);
+    }
+
+    function changeScreenSize() {
+        let size = document.getElementById('screen_select') ? document.getElementById('screen_select').value.split('x') : ['212', '104'];
+        canvas.width = parseInt(size[0]);
+        canvas.height = parseInt(size[1]);
+        canvas.style.width = "100%";
+        canvas.style.maxWidth = (canvas.width * 1.5) + "px";
+        renderAll();
+    }
+
+    function addObject(type) {
+        layerIdCounter++;
+        let defaultText = type === 'text' ? '@H:@M' : '';
+        let obj = {
+            id: layerIdCounter,
+            type: type,	
+            visible: true,
+            x: 8, y: (type === 'calendar') ? 20 : 15,
+            text: defaultText,
+            font_type: 'sfont',
+            dir: 'horizontal',
+            length: 50, thickness: 2,
+            width: (type === 'box') ? 60 : 48, 
+            height: (type === 'box') ? 30 : 48, 
+            thickness_box: 1, 
+            lang: 0,
+            bitmapData: null, imgElement: null,
+            selectedIconKey: "" // Theo dõi icon đang được chọn
+        };
+        layers.push(obj);
+        selectLayer(obj.id);
+        renderAll();
+    }
+
+    function selectLayer(id) {
+        activeLayerId = id;
+        refreshIconsGrid();
+        
+        let obj = layers.find(l => l.id === id);
+        let ctrlCard = document.getElementById('global_control_card');
+        
+        if(!obj) {
+            ctrlCard.style.display = 'none';
+            return;
+        }
+        
+        ctrlCard.style.display = 'block';
+        document.getElementById('ctrl_title').innerText = `[${obj.type.toUpperCase()}] #${obj.id}`;
+        document.getElementById('ctrl_toggle_btn').innerText = obj.visible ? "Ẩn" : "Hiện";
+        document.getElementById('joy_coord').innerHTML = `X:${obj.x}<br>Y:${obj.y}`;
+        
+        let propsForm = document.getElementById('dynamic_props_form');
+        let html = '';
+        
+        if(obj.type === 'text') {
+            html = `
+             <div class="form-group">
+                    <label>Chuỗi văn bản</label>
+                    <input type="text" value="${obj.text}" oninput="updateActiveProp('text', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Cấu trúc Font</label>
+                    <div style="display: flex; gap: 5px; align-items: center;">
+                        <select id="font_select" style="flex: 1;" onchange="updateActiveProp('font_type', this.value)">
+                            <option value="sfont" ${obj.font_type==='sfont'?'selected':''}>T_font_1(Trung)</option>
+                            <option value="N_font_1" ${obj.font_type==='N_font_1'?'selected':''}>N_font_1</option>
+                            <option value="N_font_2" ${obj.font_type==='N_font_2'?'selected':''}>N_font_2</option>
+                            <option value="N_font_3" ${obj.font_type==='N_font_3'?'selected':''}>N_font_3</option>
+                            <option value="N_font_4" ${obj.font_type==='N_font_4'?'selected':''}>N_font_4</option>
+                            <option value="N_font_5" ${obj.font_type==='N_font_5'?'selected':''}>N_font_5</option>
+                            <option value="N_font_6" ${obj.font_type==='N_font_6'?'selected':''}>N_font_6</option>
+                            <option value="T_font_2" ${obj.font_type==='T_font_2'?'selected':''}>T_font_2(Viet)</option>
+                            <option value="T_font_3" ${obj.font_type==='T_font_3'?'selected':''}>T_font_3(Viet)</option>
+                            <option value="T_font_4" ${obj.font_type==='T_font_4'?'selected':''}>T_font_4(Viet)</option>
+                            <option value="T_font_5" ${obj.font_type==='T_font_5'?'selected':''}>T_font_5(Viet)</option>
+                            <option value="T_font_6" ${obj.font_type==='T_font_6'?'selected':''}>T_font_6(Viet)</option>
+                            <option value="T_font_7" ${obj.font_type==='T_font_7'?'selected':''}>T_font_7</option>
+                            <option value="T_font_8" ${obj.font_type==='T_font_8'?'selected':''}>T_font_8</option>
+                            <option value="T_font_9" ${obj.font_type==='T_font_9'?'selected':''}>T_font_9</option>
+                            <option value="T_font_10" ${obj.font_type==='T_font_10'?'selected':''}>T_font_10</option>
+                        </select>
+                        <button type="button" class="btn-font-step" onclick="stepFont(+1)" title="Font kế tiếp">▼</button>
+                        <button type="button" class="btn-font-step" onclick="stepFont(-1)" title="Font trước đó">▲</button>
+                    </div>
+                </div>
+            `;
+        } else if(obj.type === 'line') {
+            html = `
+                <div class="form-group">
+                    <label>Hướng</label>
+                    <select onchange="updateActiveProp('dir', this.value)">
+                        <option value="horizontal" ${obj.dir==='horizontal'?'selected':''}>Ngang</option>
+                        <option value="vertical" ${obj.dir==='vertical'?'selected':''}>Dọc</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Dài L: <span id="val_len">${obj.length}</span>px</label>
+                    <input type="range" min="1" max="216" value="${obj.length}" oninput="document.getElementById('val_len').innerText=this.value; updateActiveProp('length', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Dày T: <span id="val_thick">${obj.thickness}</span>px</label>
+                    <input type="range" min="1" max="5" value="${obj.thickness}" oninput="document.getElementById('val_thick').innerText=this.value; updateActiveProp('thickness', this.value)">
+                </div>
+            `;
+        } else if(obj.type === 'bitmap') {
+            let thumbsHtml = '';
+            Object.keys(MY_HARDCODED_ICONS).forEach(key => {
+                let isSelected = (obj.selectedIconKey === key) ? 'selected' : '';
+                thumbsHtml += `
+                     <div class="img-thumb-item ${isSelected}" data-key="${key}" onclick="handleSelectSavedIcon('${key}')" title="${key}">
+                        <img src="${MY_HARDCODED_ICONS[key]}" alt="${key}">
+                    </div>
+                `;
+            });
+
+            html = `
+                    <div class="form-group">
+                        <label>Rộng W: <span id="val_w">${obj.width}</span>px</label>
+                        <input type="range" min="1" max="300" value="${obj.width}" oninput="document.getElementById('val_w').innerText=this.value; updateActiveProp('width', this.value)">
+                    </div>
+                    <div class="form-group">
+                        <label>Cao H: <span id="val_h">${obj.height}</span>px</label>
+                        <input type="range" min="1" max="300" value="${obj.height}" oninput="document.getElementById('val_h').innerText=this.value; updateActiveProp('height', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Chọn nhanh ảnh có sẵn</label>
+                    <div class="img-thumb-grid">
+                        ${thumbsHtml}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Duyệt file từ máy</label>
+                    <input type="file" accept="image/*" onchange="handleImgUploadTop(this.files[0])" style="font-size:11px; border:none; padding:0;">
+                </div>
+            `;
+        } else if(obj.type === 'calendar') {
+            html = `
+                <div class="form-group">
+                    <label>Ngôn ngữ tiêu đề tuần</label>
+                    <select onchange="updateActiveProp('lang', this.value)">
+                        <option value="0" ${obj.lang===0?'selected':''}>Tiếng Anh (SU,MO,TU..)</option>
+                        <option value="1" ${obj.lang===1?'selected':''}>Tiếng Trung (日,一..)</option>
+                        <option value="2" ${obj.lang===2?'selected':''}>Tiếng Việt (CN,T2..)</option>
+                    </select>
+                </div>
+            `;
+        } else if(obj.type === 'battery') {
+            html = `<div style="font-size:11px; color:#64748b; text-align:center; padding-top:15px;">Mô phỏng cột pin cố định</div>`;
+        } else if(obj.type === 'box') {
+            html = `
+                <div class="form-group">
+                    <label>Dài W: <span id="val_box_w">${obj.width}</span>px</label>
+                    <input type="range" min="1" max="216" value="${obj.width}" oninput="document.getElementById('val_box_w').innerText=this.value; updateActiveProp('width', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Rộng H: <span id="val_box_h">${obj.height}</span>px</label>
+                    <input type="range" min="1" max="104" value="${obj.height}" oninput="document.getElementById('val_box_h').innerText=this.value; updateActiveProp('height', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Độ dày viền (px)</label>
+                    <input type="number" min="1" value="${obj.thickness_box}" oninput="updateActiveProp('thickness_box', this.value)">
+                </div>
+            `;
+        }
+        
+        propsForm.innerHTML = html;
+    }
+
+    function handleSelectSavedIcon(iconKey) {
+        if(!iconKey || !activeLayerId || !MY_HARDCODED_ICONS[iconKey]) return;
+        
+        let img = new Image();
+        img.onload = function() {
+            let obj = layers.find(l => l.id === activeLayerId);
+            if(obj) {
+                obj.imgElement = img;
+                obj.selectedIconKey = iconKey; 
+                if(obj.width <= 0 || obj.width === 48) obj.width = img.width;
+                if(obj.height <= 0 || obj.height === 48) obj.height = img.height;
+                processAndResizeImage(obj);
+                
+                let valW = document.getElementById('val_w');
+                let valH = document.getElementById('val_h');
+                if(valW) valW.innerText = obj.width;
+                if(valH) valH.innerText = obj.height;
+                
+                document.querySelectorAll('.img-thumb-item').forEach(item => {
+                    if(item.getAttribute('data-key') === iconKey) {
+                        item.classList.add('selected');
+                    } else {
+                        item.classList.remove('selected');
+                    }
+                });
+
+                renderAll();
+            }
+        };
+        img.src = MY_HARDCODED_ICONS[iconKey];
+    }
+
+    function refreshIconsGrid() {
+        let grid = document.getElementById('objects_icon_grid');
+        grid.innerHTML = '';
+        layers.forEach(obj => {
+            let btn = document.createElement('div');
+            btn.className = `object-icon-btn ${obj.id === activeLayerId ? 'active' : ''} ${!obj.visible ? 'hidden-layer' : ''}`;
+            btn.onclick = () => selectLayer(obj.id);
+            
+            let sym = iconsMap[obj.type] || '📦';
+            btn.innerHTML = `
+                <span class="badge-id">#${obj.id}</span>
+                <span class="status-dot"></span>
+                <span class="icon-sym">${sym}</span>
+                <span>${obj.type.toUpperCase()}</span>
+            `;
+            grid.appendChild(btn);
+        });
+    }
+
+    function moveActive(dx, dy) {
+        let obj = layers.find(l => l.id === activeLayerId);
+        if(!obj) return;
+
+        let step = 1;
+        if (holdCounter > 15) step = 5;
+        else if (holdCounter > 8) step = 3;
+        else if (holdCounter > 3) step = 2;
+
+        obj.x += dx * step;
+        obj.y += dy * step;
+        document.getElementById('joy_coord').innerHTML = `X:${obj.x}<br>Y:${obj.y}`;
+        renderAll();
+    }
+
+    let currentDx = 0, currentDy = 0;
+
+    function handleJoystickStart(e, dx, dy) {
+        e.preventDefault();
+        handleJoystickStop();
+
+        currentDx = dx;
+        currentDy = dy;
+        holdCounter = 0;
+
+        let obj = layers.find(l => l.id === activeLayerId);
+        if (obj) {
+            obj.x += currentDx;
+            obj.y += currentDy;
+            document.getElementById('joy_coord').innerHTML = `X:${obj.x}<br>Y:${obj.y}`;
+            renderAll();
+        }
+
+        moveTimeout = setTimeout(() => {
+            moveInterval = setInterval(() => {
+                holdCounter++;
+                moveActive(currentDx, currentDy);
+            }, 50);
+        }, 400);
+    }
+
+    function handleJoystickStop(e) {
+        if (e) e.preventDefault();
+        if (moveTimeout) { clearTimeout(moveTimeout); moveTimeout = null; }
+        if (moveInterval) { clearInterval(moveInterval); moveInterval = null; }
+        holdCounter = 0;
+    }
+
+    function setupJoystickEvents() {
+        const joyButtons = document.querySelectorAll('.joystick-grid .joy-btn');
+        
+        joyButtons.forEach(btn => {
+            let txt = btn.innerText;
+            let dx = 0, dy = 0;
+            
+            if (txt === '▲') { dx = 0; dy = -1; }
+            else if (txt === '▼') { dx = 0; dy = 1; }
+            else if (txt === '◄') { dx = -1; dy = 0; }
+            else if (txt === '►') { dx = 1; dy = 0; }
+            else return;
+
+            btn.removeAttribute('onclick');
+
+            btn.addEventListener('mousedown', (e) => handleJoystickStart(e, dx, dy));
+            btn.addEventListener('touchstart', (e) => handleJoystickStart(e, dx, dy), { passive: false });
+
+            btn.addEventListener('mouseup', handleJoystickStop);
+            btn.addEventListener('mouseleave', handleJoystickStop);
+            btn.addEventListener('touchend', handleJoystickStop, { passive: false });
+            btn.addEventListener('touchcancel', handleJoystickStop);
+        });
+    }
+	
+    function updateActiveProp(prop, value) {
+        let obj = layers.find(l => l.id === activeLayerId);
+        if(!obj) return;
+        if(['x', 'y', 'width', 'height', 'length', 'thickness', 'thickness_box', 'lang'].includes(prop)) {
+            obj[prop] = parseInt(value) || 0;
+        } else {
+            obj[prop] = value;
+        }
+        if((prop === 'width' || prop === 'height') && obj.imgElement && obj.type === 'bitmap') {
+            processAndResizeImage(obj);
+        }
+        renderAll();
+    }
+
+    function toggleActiveLayer() {
+        let obj = layers.find(l => l.id === activeLayerId);
+        if(obj) {
+            obj.visible = !obj.visible;
+            document.getElementById('ctrl_toggle_btn').innerText = obj.visible ? "Ẩn" : "Hiện";
+            refreshIconsGrid();
+            renderAll();
+        }
+    }
+
+    function deleteActiveLayer() {
+        if(!activeLayerId) return;
+        layers = layers.filter(l => l.id !== activeLayerId);
+        activeLayerId = layers.length > 0 ? layers[layers.length - 1].id : null;
+        selectLayer(activeLayerId);
+        renderAll();
+    }
+
+    function handleImgUploadTop(file) {
+        if(!file || !activeLayerId) return;
+        let img = new Image();
+        img.onload = function() {
+            let obj = layers.find(l => l.id === activeLayerId);
+            if(obj) {
+                obj.imgElement = img; 
+                obj.selectedIconKey = ""; 
+                if(obj.width <= 0) obj.width = img.width;
+                if(obj.height <= 0) obj.height = img.height;
+                processAndResizeImage(obj);
+                
+                let valW = document.getElementById('val_w');
+                let valH = document.getElementById('val_h');
+                if(valW) valW.innerText = obj.width;
+                if(valH) valH.innerText = obj.height;
+
+                selectLayer(activeLayerId); 
+                renderAll();
+            }
+        };
+        img.src = URL.createObjectURL(file);
+    }
+
+    function processAndResizeImage(obj) {
+        if(!obj.imgElement || !obj.width || !obj.height) return;
+        let tempCanvas = document.createElement('canvas');
+        let tempCtx = tempCanvas.getContext('2d');
+        tempCanvas.width = obj.width; tempCanvas.height = obj.height;
+        tempCtx.drawImage(obj.imgElement, 0, 0, obj.width, obj.height);
+        let imgData = tempCtx.getImageData(0, 0, obj.width, obj.height);
+        let bitArray = [];
+        for(let i=0; i<imgData.data.length; i+=4) {
+            let brightness = (imgData.data[i] + imgData.data[i+1] + imgData.data[i+2]) / 3;
+            bitArray.push(brightness < 128 ? 1 : 0);
+        }
+        obj.bitmapData = bitArray;
+    }
+
+    function get_first_wday_sun0(year, month) {
+        let q = 1; let m = month; let y = year;
+        if (m < 3) { m += 12; y--; }
+        let k = y % 100; let j = Math.floor(y / 100);
+        let h = (q + Math.floor((13 * (m + 1)) / 5) + k + Math.floor(k / 4) + Math.floor(j / 4) + 5 * j) % 7;
+        return (h + 6) % 7; 
+    }
+
+    function get_month_days(year, month) {
+        const mdays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        if (month === 2 && ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0)) return 29;
+        return mdays[month - 1];
+    }
+
+    function renderCalendarLayer(obj) {
+        const now = new Date(); const year = now.getFullYear(); const month = now.getMonth() + 1; const day = now.getDate();
+        let start_x = obj.x; let start_y = obj.y;
+        
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        let calendar = Array(6).fill(0).map(() => Array(7).fill(0));
+        let first_wday = get_first_wday_sun0(year, month); let days = get_month_days(year, month);
+        let d = 1;
+        for (let i = 0; i < 6; i++) {
+            for (let j = 0; j < 7; j++) {
+                if (i === 0 && j < first_wday) continue;
+                if (d > days) break;
+                calendar[i][j] = d++;
+            }
+        }
+        let cell_w = 20; let cell_h = 13;
+        let total_w = 7 * cell_w; let header_h = 12;
+        ctx.fillStyle = drawColor; ctx.fillRect(start_x, start_y - header_h, total_w, header_h + 2);
+		
+        let weeks = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+        if (obj.lang === 1) {
+            weeks = ["日", "一", "二", "三", "四", "五", "六"];
+        } else if (obj.lang === 2) {
+            weeks = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
+        }
+		
+        ctx.fillStyle = "#ffffff"; ctx.font = "9px monospace"; ctx.textBaseline = "top";
+        for (let j = 0; j < 7; j++) {
+            let text_offset = (cell_w - 6) / 2; 
+            if (obj.lang === 1) text_offset = (cell_w - 12) / 2; 
+            else if (obj.lang === 2) text_offset = (cell_w - 11) / 2;
+            ctx.fillText(weeks[j], start_x + text_offset + j * cell_w, start_y - 11);
+        }
+        for (let i = 0; i < 6; i++) {
+            for (let j = 0; j < 7; j++) {
+                let date = calendar[i][j]; if (date === 0) continue;
+                let x = start_x + j * cell_w; let y = start_y + i * cell_h;
+                let buf = date.toString().padStart(2, '0'); let num_offset_x = (cell_w - 11) / 2; 
+                if (date === day) {
+                    ctx.fillStyle = drawColor; ctx.fillRect(x + 1, y + 1, cell_w - 2, cell_h); 
+                    ctx.fillStyle = "#ffffff"; ctx.fillText(buf, x + num_offset_x, y + 2);                                                                                                           
+                } else {
+                    ctx.fillStyle = drawColor; ctx.fillText(buf, x + num_offset_x, y + 2); 
+                }
+            }
+        }
+    }
+	
+	function renderBoxLayer(obj) {
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+        ctx.fillStyle = drawColor;
+        
+        let w = obj.width;
+        let h = obj.height;
+        let t = obj.thickness_box || 1;
+
+        ctx.fillRect(obj.x, obj.y, w, t);
+        ctx.fillRect(obj.x, obj.y + h - t, w, t);
+        ctx.fillRect(obj.x, obj.y + t, t, h - 2 * t);
+        ctx.fillRect(obj.x + w - t, obj.y + t, t, h - 2 * t);
+    }
+
+    function renderAll() {
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = "#ff0000"; ctx.strokeRect(0, 0, canvas.width, canvas.height);
+        for(let obj of layers) {
+            if(!obj.visible) continue;
+            if(obj.type === 'text') renderTextLayer(obj);
+            else if(obj.type === 'line') renderLineLayer(obj);
+            else if(obj.type === 'bitmap') renderBitmapLayer(obj);
+			else if(obj.type === 'battery') renderBatteryLayer(obj);
+			else if(obj.type === 'calendar') renderCalendarLayer(obj); 
+			else if(obj.type === 'box') renderBoxLayer(obj);
+        }
+    }
+
+    function find_font(fontArray, ucs) {
+        if (!fontArray || fontArray.length < 2) return null;
+        const total = fontArray[0] | (fontArray[1] << 8);
+        for (let i = 0; i < total; i++) {
+            let idx = 2 + i * 4;
+            if (idx + 3 >= fontArray.length) break;
+            if ((fontArray[idx] | (fontArray[idx + 1] << 8)) === ucs) {
+                return fontArray[idx + 2] | (fontArray[idx + 3] << 8); 
+            }
+        }
+        return null;
+    }
+
+   function stepFont(direction) {
+    const select = document.getElementById('font_select');
+    if (!select) return;
+    
+    let newIndex = select.selectedIndex + direction;
+    if (newIndex >= 0 && newIndex < select.options.length) {
+        select.selectedIndex = newIndex;
+        // Bắn sự kiện change để gọi hàm updateActiveProp giữ nguyên bản
+        select.dispatchEvent(new Event('change'));
+    }
+}
+    function renderBatteryLayer(obj) {
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        ctx.fillStyle = drawColor; ctx.strokeStyle = drawColor;
+        let p = 10; let x = obj.x; let y = obj.y;
+        ctx.strokeRect(x, y - 4, 14, 8);
+        ctx.fillRect(x - 2, y - 1, 2, 3);
+        ctx.fillRect(x + 12 - p, y - 2, p + 1, 5);
+    }
+
+    function renderTextLayer(obj) {
+        let textStr = obj.text || ""; let current_x = obj.x; let start_y = obj.y;
+        const now = new Date(); const currentHour = now.getHours(); const currentMin = now.getMinutes();
+        const currentYear = now.getFullYear(); const currentMonth = now.getMonth() + 1; const currentDay = now.getDate(); const currentWeekday = now.getDay();
+        const weekdayCN = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+		const weekdayEN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const weekdayVI = ["Chủ nhật", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"];
+        
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        function drawSingleChar(ucsCode) {
+            let fontArray = null; let offset = null;
+            if (obj.font_type === 'N_font_1' && typeof N_font_1 !== 'undefined') {
+                offset = find_font(N_font_1, ucsCode); if (offset !== null) fontArray = N_font_1;
+            }
+			if (obj.font_type === 'N_font_2' && typeof N_font_2 !== 'undefined') {
+                offset = find_font(N_font_2, ucsCode); if (offset !== null) fontArray = N_font_2;
+            }
+			 if (obj.font_type === 'N_font_3' && typeof N_font_3 !== 'undefined') {
+                offset = find_font(N_font_3, ucsCode); if (offset !== null) fontArray = N_font_3;
+            }
+			 if (obj.font_type === 'N_font_4' && typeof N_font_4 !== 'undefined') {
+                offset = find_font(N_font_4, ucsCode); if (offset !== null) fontArray = N_font_4;
+            }
+			 if (obj.font_type === 'N_font_5' && typeof N_font_5 !== 'undefined') {
+                offset = find_font(N_font_5, ucsCode); if (offset !== null) fontArray = N_font_5;
+            }
+			 if (obj.font_type === 'N_font_6' && typeof N_font_6 !== 'undefined') {
+                offset = find_font(N_font_6, ucsCode); if (offset !== null) fontArray = N_font_6;
+            }	
+			if (obj.font_type === 'T_font_2' && typeof T_font_2 !== 'undefined') {
+                offset = find_font(T_font_2, ucsCode); if (offset !== null) fontArray = T_font_2;
+            }
+			if (obj.font_type === 'T_font_3' && typeof T_font_3 !== 'undefined') {
+                offset = find_font(T_font_3, ucsCode); if (offset !== null) fontArray = T_font_3;
+            }
+			if (obj.font_type === 'T_font_4' && typeof T_font_4 !== 'undefined') {
+                offset = find_font(T_font_4, ucsCode); if (offset !== null) fontArray = T_font_4;
+            }			
+			if (obj.font_type === 'T_font_5' && typeof T_font_5 !== 'undefined') {
+                offset = find_font(T_font_5, ucsCode); if (offset !== null) fontArray = T_font_5;
+            }	
+			if (obj.font_type === 'T_font_6' && typeof T_font_6 !== 'undefined') {
+                offset = find_font(T_font_6, ucsCode); if (offset !== null) fontArray = T_font_6;
+            }	
+			if (obj.font_type === 'T_font_7' && typeof T_font_7 !== 'undefined') {
+                offset = find_font(T_font_7, ucsCode); if (offset !== null) fontArray = T_font_7;
+            }
+			if (obj.font_type === 'T_font_8' && typeof T_font_8 !== 'undefined') {
+                offset = find_font(T_font_8, ucsCode); if (offset !== null) fontArray = T_font_8;
+            }
+			if (obj.font_type === 'T_font_9' && typeof T_font_9 !== 'undefined') {
+                offset = find_font(T_font_9, ucsCode); if (offset !== null) fontArray = T_font_9;
+            }
+			if (obj.font_type === 'T_font_10' && typeof T_font_10 !== 'undefined') {
+                offset = find_font(T_font_10, ucsCode); if (offset !== null) fontArray = T_font_10;
+            }
+            if (offset === null && typeof sfont !== 'undefined') {
+                offset = find_font(sfont, ucsCode); if (offset !== null) fontArray = sfont;
+            }
+            if (!fontArray || offset === null) { current_x += 8; return; }
+            let p = offset;
+            let ft_adv = fontArray[p + 0]; let ft_bw = fontArray[p + 1]; let ft_bh = fontArray[p + 2];
+            let ft_bx = (fontArray[p + 3] << 24) >> 24; let ft_by = (fontArray[p + 4] << 24) >> 24;
+            let ft_lsize = Math.floor((ft_bw + 7) / 8); p += 5;
+            let draw_x = current_x + ft_bx; let draw_y = start_y + ft_by;
+            
+            ctx.fillStyle = drawColor;
+            for (let r = 0; r < ft_bh; r++) {
+                for (let c = 0; c < ft_bw; c++) {
+                    if ((fontArray[p + (c >> 3)] & (0x80 >> (c % 8))) !== 0) {
+                        ctx.fillRect(draw_x + c, draw_y + r, 1, 1);
+                    }
+                }
+                p += ft_lsize;
+            }
+            current_x += ft_adv;
+        }
+
+        let i = 0;
+        while (i < textStr.length) {
+            if (textStr[i] === '@' && i + 1 < textStr.length) {
+                let nextChar = textStr[i + 1];
+                if (['H', 'M', 'y', 'm', 'd', 't', 'n','r','R','b','x'].includes(nextChar)) {
+                    if (nextChar === 'r') {
+                        let strCN = weekdayCN[currentWeekday]; for (let j = 0; j < strCN.length; j++) drawSingleChar(strCN.charCodeAt(j));
+                        i += 2; continue;
+                    }
+                    if (nextChar === 'R') {
+                        let strEN = weekdayEN[currentWeekday]; for (let j = 0; j < strEN.length; j++) drawSingleChar(strEN.charCodeAt(j));
+                        i += 2; continue;
+                    }
+					 if (nextChar === 'x') {
+                        let strVI = weekdayVI[currentWeekday]; for (let j = 0; j < strVI.length; j++) drawSingleChar(strVI.charCodeAt(j));
+                        i += 2; continue;
+                    }
+					 if (nextChar === 'b') {
+						let strB = "3.5v";
+						for (let j = 0; j < strB.length; j++) {
+						drawSingleChar(strB.charCodeAt(j));
+						}
+						i += 2; 
+						continue;
+                    }
+                    let val = 0;
+                    if (nextChar === 'H') val = currentHour;
+                    else if (nextChar === 'M') val = currentMin;
+                    if (nextChar === 'y') {
+                        val = currentYear; 
+                        drawSingleChar(Math.floor(val / 1000).toString().charCodeAt(0));
+                        drawSingleChar(Math.floor((val % 1000) / 100).toString().charCodeAt(0));
+                        drawSingleChar(Math.floor((val % 100) / 10).toString().charCodeAt(0));
+                        drawSingleChar((val % 10).toString().charCodeAt(0));
+                        i += 2; continue;
+                    }
+                    else if (nextChar === 'm') val = currentMonth;
+                    else if (nextChar === 'd') val = currentDay;
+                    else if (nextChar === 't') val = getLunarInfo(now).month;
+                    else if (nextChar === 'n') val = getLunarInfo(now).date;
+                    
+                    drawSingleChar(Math.floor(val / 10).toString().charCodeAt(0));
+                    drawSingleChar((val % 10).toString().charCodeAt(0));
+                    i += 2; continue;
+                }
+            }
+            drawSingleChar(textStr.charCodeAt(i)); i++;
+        }
+    }
+
+    function renderLineLayer(obj) {
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        ctx.fillStyle = drawColor;
+        let w = obj.dir === 'horizontal' ? obj.length : obj.thickness;
+        let h = obj.dir === 'horizontal' ? obj.thickness : obj.length;
+        ctx.fillRect(obj.x, obj.y, w, h);
+    }
+
+    function renderBitmapLayer(obj) {
+        if(!obj.bitmapData || obj.bitmapData.length === 0) return;
+
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        ctx.fillStyle = drawColor; let idx = 0;
+        for(let r = 0; r < obj.height; r++) {
+            for(let c = 0; c < obj.width; c++) {
+                if(idx < obj.bitmapData.length && obj.bitmapData[idx] === 1) {
+                    ctx.fillRect(obj.x + c, obj.y + r, 1, 1);
+                }
+                idx++;
+            }
+        }
+    }
+	
+function calculateTextDeltas(obj) {
+    let textStr = obj.text || ""; 
+    let start_y = obj.y; 
+    
+    let max_y = start_y; 
+    let min_y = 300; 
+
+    const now = new Date(); 
+    const currentHour = now.getHours(); 
+    const currentMin = now.getMinutes(); 
+    const currentYear = now.getFullYear(); 
+    const currentMonth = now.getMonth() + 1; 
+    const currentDay = now.getDate(); 
+    const currentWeekday = now.getDay(); 
+    
+    const weekdayCN = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    const weekdayEN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const weekdayVI = ["Chủ nhật", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"]; 
+
+    function checkChar(ucsCode) {
+        let fontArray = null; 
+        let offset = null;
+        
+        if (obj.font_type === 'N_font_1' && typeof N_font_1 !== 'undefined') { offset = find_font(N_font_1, ucsCode); if (offset !== null) fontArray = N_font_1; }
+        if (obj.font_type === 'N_font_2' && typeof N_font_2 !== 'undefined') { offset = find_font(N_font_2, ucsCode); if (offset !== null) fontArray = N_font_2; }
+        if (obj.font_type === 'N_font_3' && typeof N_font_3 !== 'undefined') { offset = find_font(N_font_3, ucsCode); if (offset !== null) fontArray = N_font_3; }
+        if (obj.font_type === 'N_font_4' && typeof N_font_4 !== 'undefined') { offset = find_font(N_font_4, ucsCode); if (offset !== null) fontArray = N_font_4; }
+        if (obj.font_type === 'N_font_5' && typeof N_font_5 !== 'undefined') { offset = find_font(N_font_5, ucsCode); if (offset !== null) fontArray = N_font_5; }
+        if (obj.font_type === 'N_font_6' && typeof N_font_6 !== 'undefined') { offset = find_font(N_font_6, ucsCode); if (offset !== null) fontArray = N_font_6; }	
+        if (obj.font_type === 'T_font_2' && typeof T_font_2 !== 'undefined') { offset = find_font(T_font_2, ucsCode); if (offset !== null) fontArray = T_font_2; }
+        if (obj.font_type === 'T_font_3' && typeof T_font_3 !== 'undefined') { offset = find_font(T_font_3, ucsCode); if (offset !== null) fontArray = T_font_3; }
+        if (obj.font_type === 'T_font_4' && typeof T_font_4 !== 'undefined') { offset = find_font(T_font_4, ucsCode); if (offset !== null) fontArray = T_font_4; }			
+        if (obj.font_type === 'T_font_5' && typeof T_font_5 !== 'undefined') { offset = find_font(T_font_5, ucsCode); if (offset !== null) fontArray = T_font_5; }	
+		if (obj.font_type === 'T_font_6' && typeof T_font_6 !== 'undefined') { offset = find_font(T_font_6, ucsCode); if (offset !== null) fontArray = T_font_6; }	
+		if (obj.font_type === 'T_font_7' && typeof T_font_7 !== 'undefined') { offset = find_font(T_font_7, ucsCode); if (offset !== null) fontArray = T_font_7; }	
+		if (obj.font_type === 'T_font_8' && typeof T_font_8 !== 'undefined') { offset = find_font(T_font_8, ucsCode); if (offset !== null) fontArray = T_font_8; }	
+		if (obj.font_type === 'T_font_9' && typeof T_font_9 !== 'undefined') { offset = find_font(T_font_9, ucsCode); if (offset !== null) fontArray = T_font_9; }	
+		if (obj.font_type === 'T_font_10' && typeof T_font_10 !== 'undefined') { offset = find_font(T_font_10, ucsCode); if (offset !== null) fontArray = T_font_10; }	
+        if (offset === null && typeof sfont !== 'undefined') { offset = find_font(sfont, ucsCode); if (offset !== null) fontArray = sfont; }
+        
+        if (!fontArray || offset === null) return;
+        
+        let p = offset;
+        let ft_bh = fontArray[p + 2]; 
+        let ft_by = (fontArray[p + 4] << 24) >> 24; 
+        
+        let char_top_y = start_y + ft_by; 
+        if (char_top_y < min_y) min_y = char_top_y;
+
+        let char_max_y = start_y + ft_by + ft_bh; 
+        if (char_max_y > max_y) max_y = char_max_y;
+    }
+
+    let i = 0;
+    while (i < textStr.length) {
+        if (textStr[i] === '@' && i + 1 < textStr.length) {
+            let nextChar = textStr[i + 1]; 
+            if (['H', 'M', 'y', 'm', 'd', 't', 'n','r','R','b','x'].includes(nextChar)) { 
+                if (nextChar === 'r') { let strCN = weekdayCN[currentWeekday]; for (let j = 0; j < strCN.length; j++) checkChar(strCN.charCodeAt(j)); i += 2; continue; }
+                if (nextChar === 'R') { let strEN = weekdayEN[currentWeekday]; for (let j = 0; j < strEN.length; j++) checkChar(strEN.charCodeAt(j)); i += 2; continue; }
+                if (nextChar === 'x') { let strVI = weekdayVI[currentWeekday]; for (let j = 0; j < strVI.length; j++) checkChar(strVI.charCodeAt(j)); i += 2; continue; }
+                if (nextChar === 'b') { let strB = "3.5v"; for (let j = 0; j < strB.length; j++) checkChar(strB.charCodeAt(j)); i += 2; continue; }
+                let val = 0;
+                if (nextChar === 'H') val = currentHour;
+                else if (nextChar === 'M') val = currentMin; 
+                if (nextChar === 'y') {
+                    val = currentYear;
+                    checkChar(Math.floor(val / 1000).toString().charCodeAt(0));
+                    checkChar(Math.floor((val % 1000) / 100).toString().charCodeAt(0));
+                    checkChar(Math.floor((val % 100) / 10).toString().charCodeAt(0));
+                    checkChar((val % 10).toString().charCodeAt(0)); 
+                    i += 2; continue;
+                }
+                else if (nextChar === 'm') val = currentMonth;
+                else if (nextChar === 'd') val = currentDay;
+                else if (nextChar === 't') val = getLunarInfo(now).month;
+                else if (nextChar === 'n') val = getLunarInfo(now).date; 
+                
+                checkChar(Math.floor(val / 10).toString().charCodeAt(0));
+                checkChar((val % 10).toString().charCodeAt(0)); 
+                i += 2; continue;
+            }
+        }
+        checkChar(textStr.charCodeAt(i)); i++; 
+    }
+
+    let dist_up = min_y - start_y;
+    let dist_down = max_y - start_y;
+
+    if (dist_up < 0) dist_up = 0;
+    if (dist_down < 0) dist_down = 0;
+
+    return { ymin: dist_up, ymax: dist_down };
+ }
+
+    // ================= BLE CONTROL =================
+    const SERVICE_UUID = '18424398-7cbc-11e9-8f9e-2a86e4085a59';
+    const CHARACTERISTIC_UUID = '772ae377-b3d2-4f8e-4042-5481d1e0098c';
+    let device, server, service, characteristic;
+    let currentMode = 0; const modeNames = ["Thời gian", "Lịch", "Đếm countdown"];
+
+    const log = msg => {
+        const logElem = document.getElementById('log'); logElem.textContent += msg + '\n'; logElem.scrollTop = logElem.scrollHeight;
+    };
+    const clearLog = () => document.getElementById('log').textContent = '';
+
+    function disableAllButtons() {
+        document.getElementById('sendLayout').disabled = true; document.getElementById('sendTime').disabled = true;
+        document.getElementById('refresh').disabled = true; document.getElementById('disconnect').disabled = true;
+        document.getElementById('sendSave99').disabled = true; document.getElementById('swreset').disabled = true;
+    }
+
+    function onDisconnected (event) { log(`❌ Thiết bị đã ngắt kết nối đột ngột.`); disableAllButtons(); }
+
+    document.getElementById('connect').onclick = async () => {
+        clearLog();
+        try {
+            log('⏳ Đang tìm kiếm thiết bị...');
+            device = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: "DLG-" }], optionalServices: [SERVICE_UUID, 'generic_access', 'generic_attribute']
+            });
+            device.addEventListener('gattserverdisconnected', onDisconnected);
+            server = await device.gatt.connect(); service = await server.getPrimaryService(SERVICE_UUID); characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+            document.getElementById('sendLayout').disabled = false; document.getElementById('sendTime').disabled = false;
+            document.getElementById('refresh').disabled = false; document.getElementById('disconnect').disabled = false; document.getElementById('sendSave99').disabled = false;document.getElementById('swreset').disabled = false;
+            log('🎉 Mạch BLE đã ĐÃ KẾT NỒI & SẴN SÀNG!');
+        } catch (e) { log(`❌ Lỗi kết nối: ${e}`); }
+    };
+
+    document.getElementById('sendLayout').onclick = async () => {
+        if (!characteristic) return;
+        const exportLayers = layers.slice(0, 20); log(`📤 Đang gửi lần lượt từng gói đơn...`);
+        for (let i = 0; i < exportLayers.length; i++) {
+            const obj = exportLayers[i];
+           
+		   let typeCode = (obj.type === 'line') ? 0x02 : 
+               (obj.type === 'bitmap' ? 0x03 : 
+               (obj.type === 'battery' ? 0x04 : 
+               (obj.type === 'calendar' ? 0x05 : 
+               (obj.type === 'box' ? 0x06 : 0x01))));
+			   			  			   
+            let dynamicSize = 7; let textBytes = null;
+            if (typeCode === 0x01) { 
+                textBytes = new TextEncoder().encode(obj.text || ""); dynamicSize += 2 +1+2+ textBytes.length; 
+            } else if (typeCode === 0x02) { dynamicSize += 4; }
+            else if (typeCode === 0x03) { 
+                let rawBmpData = obj.bitmapData ? packBitmapToBytesRowAligned(obj.bitmapData, obj.width, obj.height) : [];
+                dynamicSize += 6 + rawBmpData.length; obj.packedBmp = rawBmpData; 
+            }
+			else if (typeCode === 0x04 ) { dynamicSize = 7; }
+			else if (typeCode === 0x05) { dynamicSize = 8; }
+			else if (typeCode === 0x06) { dynamicSize = 12; }
+
+            const buffer = new ArrayBuffer(dynamicSize); const view = new DataView(buffer);
+            view.setUint8(0, 0x95); view.setUint8(1, i); view.setUint8(2, typeCode);               
+            view.setInt16(3, obj.x, true); view.setInt16(5, obj.y, true);            
+            if (typeCode === 0x01) {
+                let fontCode = 0; 
+                
+                if (obj.font_type && obj.font_type.startsWith('N_font_')) {
+                    fontCode = parseInt(obj.font_type.replace('N_font_', '')) || 0;
+                } 
+                else if (obj.font_type && obj.font_type.startsWith('T_font_')) {
+                    fontCode = (parseInt(obj.font_type.replace('T_font_', ''))+5) || 0
+                }
+                view.setUint8(7, fontCode); 
+				let specialFlag = 0;
+				if ((obj.text || "").includes('@')) {
+				specialFlag |= 0x01;
+				}
+				view.setUint8(8, specialFlag);
+				
+				let deltas = calculateTextDeltas(obj);
+				view.setUint8(9, deltas.ymin);
+				view.setUint8(10, deltas.ymax); 
+								
+                view.setUint8(11, textBytes.length);    
+                for (let j = 0; j < textBytes.length; j++) view.setUint8(12 + j, textBytes[j]);
+            }
+		   else if (typeCode === 0x02) {
+                view.setUint8(7, (obj.dir === 'vertical') ? 1 : 0); view.setUint16(8, obj.length || 0, true); view.setUint8(10, obj.thickness || 1);
+            } else if (typeCode === 0x03) {
+                view.setUint16(7, obj.width || 0, true); view.setUint16(9, obj.height || 0, true); view.setUint16(11, obj.packedBmp.length, true); 
+                for (let j = 0; j < obj.packedBmp.length; j++) view.setUint8(13 + j, obj.packedBmp[j]); 
+            } else if (typeCode === 0x05) { view.setUint8(7, obj.lang); }
+			
+			  else if (typeCode === 0x06) {
+                view.setUint16(7, obj.width || 0, true);
+                view.setUint16(9, obj.height || 0, true);
+                view.setUint8(11, obj.thickness_box || 1);
+            }
+
+            try {
+                const uint8Buf = new Uint8Array(buffer); log(`..Gửi Object ID [${i}] (${uint8Buf.length} bytes)`);
+                const chunkSize = 136; 
+                for (let offsetChunk = 0; offsetChunk < uint8Buf.length; offsetChunk += chunkSize) {
+                    const chunk = uint8Buf.slice(offsetChunk, offsetChunk + chunkSize);
+                    await sendRawBuffer(chunk); await new Promise(resolve => setTimeout(resolve, 20)); 
+                }
+                await new Promise(resolve => setTimeout(resolve, 50)); 
+            } catch (e) { log(`❌ Lỗi gửi Object ${i}: ` + e); break; }
+        }
+        log('✅ Đồng bộ layout hoàn tất!');
+		if (!characteristic) return;
+        log('📤 Gửi lệnh làm mới màn hình: 0x98');
+        try { await sendRawBuffer(new Uint8Array([0x98])); log('✅ Gửi lệnh làm mới thành công.'); } catch (e) { log('❌ Thất bại: ' + e); }
+    };
+
+ function packBitmapToBytesRowAligned(bitArray, width, height) {
+    let bytes = []; let byteWidth = Math.ceil(width / 8); 
+    for (let r = 0; r < height; r++) {
+        for (let bWidth = 0; bWidth < byteWidth; bWidth++) {
+            let byteVal = 0;
+            for (let b = 0; b < 8; b++) {
+                let pInRow = (bWidth * 8) + b; let pIdx = (r * width) + pInRow;
+                let bit = (pInRow < width && pIdx < bitArray.length) ? bitArray[pIdx] : 1;
+                if (bit === 1) byteVal |= (0x80 >> b);
+            }
+            bytes.push(byteVal);
+        }
+    }
+    return bytes;
+}
+
+    document.getElementById('sendTime').onclick = async () => { if (!characteristic) return; await sendDateTime(new Date()); };
+
+    document.getElementById('sendSave99').onclick = async () => {
+        if (!characteristic) return;
+        currentMode = (currentMode + 1) % 3; 
+        const buffer = new Uint8Array([0x99, currentMode & 0xFF, (currentMode >> 8) & 0xFF]);
+        log(`📤 Gửi lệnh đổi Chế độ ${currentMode} (${modeNames[currentMode]})`);
+        try {
+            await sendRawBuffer(buffer); log(`✅ Đã lưu cấu hình thành công.`);
+        } catch (e) { log('❌ Chuyển chế độ thất bại: ' + e); currentMode = (currentMode - 1 + 3) % 3; }
+    };
+
+    document.getElementById('refresh').onclick = async () => {
+        if (!characteristic) return;
+        log('📤 Gửi lệnh làm mới màn hình: 0x98');
+        try { await sendRawBuffer(new Uint8Array([0x98])); log('✅ Gửi lệnh làm mới thành công.'); } catch (e) { log('❌ Thất bại: ' + e); }
+    };
+
+    document.getElementById('swreset').onclick = async () => {
+        if (!characteristic) return;
+        log('📤 Gửi lệnh reset thiet bi: 0x9a');
+        try { await sendRawBuffer(new Uint8Array([0x9a])); log('✅ Gửi lệnh reset thành công.'); } catch (e) { log('❌ Thất bại: ' + e); }
+    };
+
+    document.getElementById('disconnect').onclick = () => { if (device && device.gatt.connected) device.gatt.disconnect(); disableAllButtons(); log('🔌 Đã ngắt kết nối chủ động.'); };
+
+    async function sendDateTime (date) {
+        const lunarInfo = getLunarInfo(date); const buffer = new Uint8Array(12);
+        buffer[0] = 0x91; buffer[1] = date.getFullYear() & 0xFF; buffer[2] = (date.getFullYear() >> 8) & 0xFF;
+        buffer[3] = date.getMonth(); buffer[4] = date.getDate(); buffer[5] = date.getHours(); buffer[6] = date.getMinutes(); buffer[7] = date.getSeconds();
+        buffer[8] = date.getDay(); buffer[9] = lunarInfo.year % 100; buffer[10] = lunarInfo.month; buffer[11] = lunarInfo.date;
+        log(`📤 Đồng bộ gói 12-bytes: Realtime & Lunar.`);
+        try { await sendRawBuffer(buffer); log('✅ Đồng bộ thời gian thực thành công!'); } catch (error) { log('❌ Lỗi: ' + error); }
+    }
+
+    async function sendRawBuffer(buffer) {
+		   await characteristic.writeValueWithResponse(buffer);
+    }
+
+    // ================= LUNAR CALENDAR CALCULATION =================
+    function getLunarYearDays(y) {
+        let sum = 348;
+        for (let i = 0x8000; i > 0x8; i >>= 1) {
+            sum += (LUNAR_INFO[y - 1900] & i) ? 1 : 0;
+        }
+        return sum + leapMonthDays(y);
+    }
+
+    function leapMonth(y) {
+        return LUNAR_INFO[y - 1900] & 0xf;
+    }
+
+    function leapMonthDays(y) {
+        if (leapMonth(y)) {
+            return (LUNAR_INFO[y - 1900] & 0x10000) ? 30 : 29;
+        }
+        return 0;
+    }
+
+    function monthDays(y, m) {
+        return (LUNAR_INFO[y - 1900] & (0x10000 >> m)) ? 30 : 29;
+    }
+
+    function getLunarInfo(date) {
+        let offset = Math.floor((date.getTime() - new Date(1900, 0, 31).getTime()) / 86400000);
+        let i, leap = 0, temp = 0;
+        for (i = 1900; i < 2050 && offset > 0; i++) {
+            temp = getLunarYearDays(i);
+            offset -= temp;
+        }
+        if (offset < 0) {
+            offset += temp;
+            i--;
+        }
+        let year = i;
+        leap = leapMonth(year);
+        let isLeap = false;
+        let month = 1;
+        for (month = 1; month < 13 && offset > 0; month++) {
+            if (leap > 0 && month === (leap + 1) && !isLeap) {
+                --month;
+                isLeap = true;
+                temp = leapMonthDays(year);
+            } else {
+                temp = monthDays(year, month);
+            }
+            if (isLeap && month === (leap + 1)) isLeap = false;
+            offset -= temp;
+        }
+        if (offset === 0 && leap > 0 && month === leap + 1) {
+            if (isLeap) {
+                isLeap = false;
+            } else {
+                isLeap = true;
+                --month;
+            }
+        }
+        if (offset < 0) {
+            offset += temp;
+            --month;
+        }
+        return {
+            year: year,
+            month: month,
+            date: offset + 1,
+            isLeap: isLeap
+        };
+    }
+
+    // ================= INITIALIZATION & STORAGE =================
+   function saveLayoutToBrowser() {
+    let slot = document.getElementById('slot_select') ? document.getElementById('slot_select').value : "1";
+    localStorage.setItem("eink_saved_layers_slot_" + slot, JSON.stringify(layers));
+    if(document.getElementById('screen_select')) {
+        localStorage.setItem("eink_saved_screen_slot_" + slot, document.getElementById('screen_select').value);
+    }
+    log(`💾 Đã lưu giao diện hiện tại vào Slot ${slot}.`);
+}
+
+   function loadLayoutFromBrowser() {
+    let slot = document.getElementById('slot_select') ? document.getElementById('slot_select').value : "1";
+    let raw = localStorage.getItem("eink_saved_layers_slot_" + slot);
+    let scr = localStorage.getItem("eink_saved_screen_slot_" + slot);
+    
+    // Tương thích ngược: Nếu slot 1 chưa có dữ liệu mới, thử kiểm tra key lưu cũ
+    if (!raw && slot === "1") {
+        raw = localStorage.getItem("eink_saved_layers");
+        scr = localStorage.getItem("eink_saved_screen");
+    }
+
+    if(raw) {
+        layers = JSON.parse(raw);
+        layers.forEach(obj => {
+            if(obj.selectedIconKey && MY_HARDCODED_ICONS[obj.selectedIconKey]) {
+                let img = new Image();
+                img.onload = () => { obj.imgElement = img; renderAll(); };
+                img.src = MY_HARDCODED_ICONS[obj.selectedIconKey];
+            }
+        });
+        if(scr && document.getElementById('screen_select')) {
+            document.getElementById('screen_select').value = scr;
+            changeScreenSize();
+        }
+        if(layers.length > 0) {
+            layerIdCounter = Math.max(...layers.map(l => l.id)) || 0;
+            selectLayer(layers[layers.length - 1].id);
+        } else {
+            activeLayerId = null;
+            selectLayer(null);
+        }
+        log(`📂 Đã tải giao diện thành công từ Slot ${slot}!`);
+        renderAll();
+    } else {
+        log(`⚠️ Không tìm thấy dữ liệu giao diện ở Slot ${slot}.`);
+    }
+}
+	    function readFileAsArrayBuffer(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+      });
+    }
+ function find_patten(target, patten) {
+      for (let i = 0; i <= target.length - patten.length; i++) {
+        let match = true;
+        for (let j = 0; j < patten.length; j++) {
+          if (target[i + j] !== patten[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) return i;
+      }
+      return -1;
+    }
+
+async function onUpdate() {
+      const upfirmButton = document.getElementById('upfirm-button');
+      const progressBar = document.getElementById('update_progress_bar');
+      const progressText = document.getElementById('update_progress_text');
+      const progressSpinner = document.getElementById('progress_spinner');
+      
+      upfirmButton.disabled = true;
+      upfirmButton.innerHTML = '⚡ Đang nâng cấp...';
+      
+      progressBar.className = "progress-bar-fill";
+      progressBar.style.width = "0%";
+      progressText.textContent = "0%";
+      progressSpinner.style.display = "inline-block";
+      
+      document.getElementById('progress-container').classList.remove('hidden');
+      
+      let firm_buf, firm_size;
+
+      try {
+        console.log('Đang mở tệp firmware');
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'Firm files', accept: { 'text/plain': ['.bin'] } }]
+        });
+        const file = await handle.getFile();
+        let abuf = await readFileAsArrayBuffer(file);
+        firm_buf = new Uint8Array(abuf);
+        firm_size = file.size;
+      } catch (err) {
+        console.log('Không thể mở tệp fw:', err);
+        upfirmButton.innerHTML = 'Bắt đầu nạp OTA';
+        upfirmButton.disabled = false;
+        document.getElementById('progress-container').classList.add('hidden');
+        return;
+      }
+
+      let firm_magic = new Uint8Array([0x79, 0x13, 0xa5, 0xf9, 0x86, 0xec, 0x5a, 0x06]);
+      let pos = find_patten(firm_buf, firm_magic);
+      if (pos == -1) {
+        console.log('FW không hợp lệ - không check đượcn phiên bản');
+        upfirmButton.innerHTML = 'Bắt đầu nạp OTA';
+        upfirmButton.disabled = false;
+        document.getElementById('progress-container').classList.add('hidden');
+        return;
+      }
+
+      let firm_ver = firm_buf[pos + 9] * 256 + firm_buf[pos + 8];
+      let firm_crc = CRC32.buf(firm_buf);
+      console.log('Phiên bản:', firm_ver, 'Kích thước:', firm_size, 'CRC:', (firm_crc >>> 0).toString(16));
+
+      let buf = new Uint8Array(136);
+      let view = new DataView(buf.buffer);
+      buf[0] = 0xa0;
+      view.setUint16(2, firm_size, true);
+      await characteristic.writeValue(buf);
+
+      let sent = 0;
+      const totalSize = firm_size + 64;
+      
+      try {
+        for (let i = 0; i < totalSize; i += 256) {
+          buf.fill(0xff);
+          if (i === 0) {
+            view.setUint32(8, 0x00aa5170, true);
+            view.setUint32(12, firm_size, true);
+            view.setUint32(16, firm_crc, true);
+            view.setUint32(36, 0xa50f0000 + firm_ver, true);
+            buf[40] = 0;
+            buf[0] = 0xa2;
+            buf.set(firm_buf.slice(sent, sent + 64), 72);
+            await characteristic.writeValue(buf);
+            sent += 64;
+          } else {
+            buf[0] = 0xa2;
+            buf.set(firm_buf.slice(sent, sent + 128), 8);
+            await characteristic.writeValue(buf);
+            sent += 128;
+          }
+          buf[0] = 0xa3;
+          buf.set(firm_buf.slice(sent, sent + 128), 8);
+          await characteristic.writeValue(buf);
+          sent += 128;
+
+          const progress = Math.min(Math.round(100 * sent / totalSize), 100);
+          progressBar.style.width = `${progress}%`;
+          progressText.textContent = `${progress}%`;
+          document.getElementById('update_progress').textContent = `Đã nạp: ${sent} / ${totalSize} bytes`;
+        }
+
+        buf[0] = 0xa4;
+        buf.fill(0, 1, 4);
+        await characteristic.writeValue(buf);
+        
+        progressBar.classList.add('success');
+        progressSpinner.style.display = "none";
+        document.getElementById('update_progress').textContent = `Cập nhật thành công! Đang khởi động lại...`;
+        upfirmButton.innerHTML = 'Bắt đầu nạp OTA';
+        upfirmButton.disabled = false;
+        console.log('Nâng cấp hoàn tất!');
+      } catch (err) {
+        progressBar.classList.add('error');
+        progressSpinner.style.display = "none";
+        document.getElementById('update_progress').textContent = `Lỗi truyền dữ liệu: ${err.message || err}`;
+        upfirmButton.innerHTML = 'Thử lại OTA';
+        upfirmButton.disabled = false;
+      }
+    }
+    window.onload = () => {
+        changeScreenSize();
+        setupJoystickEvents();
+        setInterval(() => {
+            let now = new Date();
+            let h = now.getHours().toString().padStart(2, '0');
+            let m = now.getMinutes().toString().padStart(2, '0');
+            let s = now.getSeconds().toString().padStart(2, '0');
+            document.getElementById('sysTime').innerText = `${h}:${m}:${s}`;
+            renderAll();
+        }, 1000);
+    };
+</script>
+</body>
+</html>

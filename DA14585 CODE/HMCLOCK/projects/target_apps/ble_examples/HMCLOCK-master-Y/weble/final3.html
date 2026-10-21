@@ -1,0 +1,1407 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>BLE E-Ink Multi-Object Controller & OTA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <script src="fonts_data.js"></script>
+	  <script src="https://cdn.sheetjs.com/crc-32-latest/package/crc32.js"></script>
+    <style>
+        :root {
+            --primary: #0078d7;
+            --primary-hover: #005a9e;
+            --success: #28a745;
+            --danger: #dc3545;
+            --warning: #ffc107;
+            --bg-body: #f4f6f9;
+            --bg-card: #ffffff;
+            --text-main: #333333;
+            --border-color: #e0e0e0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            margin: 0; padding: 0;
+            background: var(--bg-body); color: var(--text-main);
+            display: flex; flex-direction: column; align-items: center;
+            padding-bottom: 60px; /* Tránh đè panel điều khiển */
+            box-sizing: border-box;
+        }
+        .container { width: 100%; max-width: 500px; box-sizing: border-box; padding: 10px; overflow-x: hidden; }
+        
+        .sticky-preview-panel {
+            position: sticky; top: 0; z-index: 1000;
+            background: var(--bg-body); width: 100%; max-width: 500px;
+            box-sizing: border-box; padding: 10px 15px;
+            border-bottom: 2px solid var(--primary);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .canvas-wrapper { text-align: center; margin: 5px 0; }
+        #canvas-container {
+            border: 2px dashed #666; background: #fff; display: inline-block;
+            padding: 4px; border-radius: 4px; max-width: 100%; box-sizing: border-box;
+        }
+        canvas { background: #fff; border: 1px solid #ddd; image-rendering: pixelated; display: block; margin: 0 auto; max-width: 100%; height: auto; }
+        
+        .tabs-container { display: flex; background: #e0e0e0; border-radius: 8px; padding: 3px; gap: 4px; margin-top: 5px; }
+        .tab-btn {
+            flex: 1; background: none; color: #555; border: none; height: 36px;
+            font-size: 0.9rem; font-weight: bold; border-radius: 6px; cursor: pointer; transition: all 0.2s;
+        }
+        .tab-btn.active { background: var(--bg-card); color: var(--primary); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .card {
+            background: var(--bg-card); border-radius: 12px; padding: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); margin-bottom: 12px;
+            border: 1px solid rgba(0,0,0,0.03); box-sizing: border-box;
+            max-width: 100%;
+        }
+        h3 { font-size: 0.95rem; margin: 0 0 10px 0; border-bottom: 2px solid var(--primary); padding-bottom: 3px; color: var(--primary); }
+
+        /* DANH SÁCH LAYER DẠNG ICON (MOBILE FRIENDLY) */
+        .objects-grid {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;
+        }
+        .object-icon-btn {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            width: 72px; height: 72px; border-radius: 10px; border: 2px solid #cbd5e1;
+            background: #fff; cursor: pointer; position: relative; font-size: 10px; font-weight: bold; color: #475569;
+            box-sizing: border-box;
+        }
+        .object-icon-btn.active { border-color: var(--primary); background: #e0f2fe; color: var(--primary); }
+        .object-icon-btn .badge-id { position: absolute; top: 3px; left: 5px; font-size: 9px; color: #94a3b8; }
+        .object-icon-btn .status-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
+        .object-icon-btn.hidden-layer .status-dot { background: var(--danger); }
+        .object-icon-btn .icon-sym { font-size: 20px; margin-bottom: 2px; }
+
+        /* LƯỚI CHỌN NHANH HÌNH ẢNH MẪU */
+        .img-thumb-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+            gap: 6px;
+            margin: 4px 0 8px 0;
+            max-height: 100px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 6px;
+            border-radius: 4px;
+            background: #fafafa;
+        }
+        .img-thumb-item {
+            aspect-ratio: 1;
+            border: 2px solid #cbd5e1;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2px;
+            box-sizing: border-box;
+        }
+        .img-thumb-item:hover { border-color: var(--primary); }
+        .img-thumb-item.selected { border-color: var(--primary); background: #e0f2fe; }
+        .img-thumb-item img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            image-rendering: pixelated;
+        }
+
+        /* PANEL ĐIỀU KHIỂN CHUNG TỰ ĐỘNG XUỐNG DÒNG TRÊN MOBILE HẸP */
+        .control-panel-box { 
+            display: flex; 
+            flex-direction: row; 
+            flex-wrap: wrap; 
+            gap: 12px; 
+            background: #e2e8f0; 
+            padding: 10px; 
+            border-radius: 12px; 
+            box-sizing: border-box;
+        }
+        .joystick-grid { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            grid-template-rows: repeat(3, 1fr); 
+            gap: 4px; 
+            width: 130px; 
+            height: 130px; 
+            margin: 0 auto; 
+            flex-shrink: 0;
+        }
+        .joy-btn {
+            background: #fff; border: 1px solid #cbd5e1; border-radius: 8px;
+            font-size: 18px; font-weight: bold; display: flex; align-items: center; justify-content: center; cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); user-select: none;
+        }
+        .joy-btn:active { background: #cbd5e1; }
+        .joy-center { background: none; border: none; box-shadow: none; font-size: 11px; color: #64748b; text-align: center; line-height: 1.2; }
+        
+        .props-form { 
+            flex: 1; 
+            min-width: 200px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 6px; 
+            justify-content: center; 
+            box-sizing: border-box;
+        }
+        .form-row { display: flex; gap: 6px; width: 100%; box-sizing: border-box; }
+        .form-group { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .form-group label { font-weight: bold; margin-bottom: 2px; font-size: 11px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .form-group input, .form-group select { 
+            height: 32px; 
+            padding: 4px 6px; 
+            box-sizing: border-box; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            width: 100%;
+            max-width: 100%;
+        }
+        .form-group input[type="range"] {
+            height: 20px;
+            margin: 6px 0;
+            cursor: pointer;
+        }
+
+        /* Thanh thêm đối tượng nhanh */
+        .add-object-bar { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+        .add-btn { flex: 1; min-width: 65px; height: 34px; font-weight: bold; border-radius: 6px; border: none; cursor: pointer; color: white; font-size: 11px; box-sizing: border-box; text-align: center; padding: 0 2px; }
+        .add-txt { background: #0ea5e9; } .add-line { background: #f59e0b; } .add-bmp { background: #8b5cf6; }
+
+        #sysTime { font-size: 1.1rem; margin: 0 0 10px 0; color: var(--primary); font-weight: bold; font-family: monospace; background: rgba(0, 120, 215, 0.08); padding: 6px; border-radius: 6px; text-align: center; }
+        .btn-group { display: flex; flex-direction: column; gap: 8px; }
+        button.action-btn { display: inline-flex; align-items: center; justify-content: center; height: 38px; font-size: 0.9rem; font-weight: 500; border-radius: 6px; border: none; background: var(--primary); color: #fff; cursor: pointer; width: 100%; box-sizing: border-box; }
+        button.action-btn:disabled { background: #ccc !important; cursor: not-allowed; }
+        #connect { background: var(--success); font-weight: bold; }
+        #sendLayout { background: #8b5cf6; font-weight: bold; }
+        #disconnect { background: var(--danger); }
+        #sendTime { background: #fd7e14; font-weight: bold;}
+
+        pre#log { width: 100%; background: #1e1e1e; color: #39ff14; font-size: 0.75rem; border-radius: 8px; padding: 8px; max-height: 120px; text-align: left; overflow-x: auto; overflow-y: auto; box-sizing: border-box; font-family: monospace; white-space: pre-wrap; word-break: break-all; }
+        .clear-log-btn { background: none; color: var(--danger); border: none; cursor: pointer; font-size: 0.8rem;}
+
+        /* Style cho phần Quản lý Thư viện Ảnh Base64 */
+        .manager-row { display: flex; gap: 4px; margin-top: 4px; width: 100%; box-sizing: border-box; }
+        .manager-row input { flex: 1; height: 28px; font-size: 11px; padding: 0 4px; border: 1px solid #ccc; border-radius: 4px; min-width: 0; }
+        .manager-row button { height: 28px; font-size: 11px; background: var(--primary); color: white; border: none; padding: 0 8px; border-radius: 4px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
+        .icon-tags-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .icon-tag { font-size: 10px; background: #e2e8f0; color: #334155; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+        .icon-tag .del-tag { color: var(--danger); cursor: pointer; font-weight: bold; margin-left: 2px; }
+
+        /* === GIAO DIỆN TIẾN TRÌNH OTA MỚI (ĐẸP & CHUYÊN NGHIỆP) === */
+        #progress-container {
+            margin-top: 15px;
+            padding: 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        #progress-container.hidden {
+            display: none !important;
+        }
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .progress-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #475569;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        /* Icon xoay khi đang nạp */
+        .spinner-icon {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #cbd5e1;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        /* Thanh nền */
+        .progress-track {
+            height: 10px;
+            background-color: #e2e8f0;
+            border-radius: 9999px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+        }
+        /* Thanh chạy có hiệu ứng chuyển màu và sọc động */
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6);
+            background-size: 1rem 1rem;
+            background-image: linear-gradient(
+                45deg,
+                rgba(255, 255, 255, 0.15) 25%,
+                transparent 25%,
+                transparent 50%,
+                rgba(255, 255, 255, 0.15) 50%,
+                rgba(255, 255, 255, 0.15) 75%,
+                transparent 75%,
+                transparent
+            );
+            animation: progress-bar-stripes 1s linear infinite;
+            border-radius: 9999px;
+            transition: width 0.2s ease-out, background 0.3s ease;
+        }
+        @keyframes progress-bar-stripes {
+            from { background-position: 1rem 0; }
+            to { background-position: 0 0; }
+        }
+        /* Đổi màu khi hoàn tất */
+        .progress-bar-fill.success {
+            background: #10b981 !important;
+            animation: none;
+        }
+        /* Đổi màu khi lỗi */
+        .progress-bar-fill.error {
+            background: #ef4444 !important;
+            animation: none;
+        }
+        #update_progress_text {
+            font-size: 12px;
+            font-weight: bold;
+            color: #3b82f6;
+        }
+        #update_progress {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 6px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="sticky-preview-panel">
+        <div class="canvas-wrapper">
+            <div id="canvas-container">
+                <canvas id="epd_canvas"></canvas>
+            </div>
+        </div>
+        <div class="tabs-container">
+            <button class="tab-btn" onclick="switchTab('tab-simulation')">ĐỐI TƯỢNG</button>
+            <button class="tab-btn active" onclick="switchTab('tab-control')">KẾT NỒI MẠCH</button>
+            <button class="tab-btn" onclick="switchTab('tab-ota')">CẬP NHẬT</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="tab-simulation" class="tab-content">
+            <!-- THANH THÊM NHANH -->
+            <div class="add-object-bar">
+                <button class="add-btn add-txt" onclick="addObject('text')">+ Chữ</button>
+                <button class="add-btn add-line" onclick="addObject('line')">+ Đường</button>
+                <button class="add-btn add-bmp" onclick="addObject('bitmap')">+ Ảnh</button>
+                <button class="add-btn" style="background: #10b981;" onclick="addObject('battery')">+ Pin</button>
+				<button class="add-btn" style="background: #ec4899;" onclick="addObject('calendar')">+ Lịch</button>
+            </div>
+
+            <!-- GRID CHỨA CÁC ICON ĐỐI TƯỢNG -->
+            <div class="objects-grid" id="objects_icon_grid"></div>
+
+            <!-- PANEL ĐIỀU KHIỂN CHUNG CHO ĐỐI TƯỢNG ĐƯỢC CHỌN -->
+            <div class="card" id="global_control_card" style="display:none; padding: 10px;">
+                <h3 style="margin-bottom:8px; display:flex; justify-content:space-between; align-items: center;">
+                    <span id="ctrl_title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;">DỰ PHÒNG</span>
+                    <div style="flex-shrink: 0;">
+                        <button class="layer-btn" id="ctrl_toggle_btn" onclick="toggleActiveLayer()" style="background:#64748b; color:white; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;">Ẩn</button>
+                        <button class="layer-btn" onclick="deleteActiveLayer()" style="background:var(--danger); color:white; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer; margin-left:4px;">Xóa</button>
+                    </div>
+                </h3>
+                
+                <!-- PANEL ĐIỀU KHIỂN CHUNG -->
+                <div class="control-panel-box">
+                    <!-- JOYSTICK DI CHUYỂN TỌA ĐỘ -->
+                    <div class="joystick-grid">
+                        <div></div>
+                        <div class="joy-btn">▲</div>
+                        <div></div>
+                        <div class="joy-btn">◄</div>
+                        <div class="joy-btn joy-center" id="joy_coord">X:0<br>Y:0</div>
+                        <div class="joy-btn">►</div>
+                        <div></div>
+                        <div class="joy-btn">▼</div>
+                        <div></div>
+                    </div>
+
+                    <!-- THUỘC TÍNH CHI TIẾT TÙY BIẾN THEO TYPE -->
+                    <div class="props-form" id="dynamic_props_form"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>CẤU HÌNH MÀN HÌNH</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <select id="screen_select" onchange="changeScreenSize()">
+                            <option value="212x104">212 x 104 (Layout 2)</option>                    
+                            <option value="250x122">250 x 122 (Layout 1)</option>       
+                            <option value="296x128">296 x 128 (Layout 0)</option>					
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-control" class="tab-content active">
+            <div class="card">
+                <h3>BỘ ĐIỀU KHIỂN MẠCH</h3>
+                <div id="sysTime">--:--:--</div>
+                <div class="btn-group">
+                    <button id="connect" class="action-btn">Kết Nối Thiết Bị</button>
+                    <button id="sendLayout" class="action-btn" disabled>Hiển thị lên thiết bị</button>
+                    <button id="sendTime" class="action-btn" disabled>Gửi Thời Gian Hiện Tại</button>                 
+                    <button id="refresh" class="action-btn" disabled>Làm Mới Màn Hình</button>
+					<button id="sendSave99" class="action-btn" disabled>Lưu giao diện</button>
+                    <button id="disconnect" class="action-btn" disabled>Ngắt Kết Nối</button> 
+                </div>
+                <div class="form-row" style="margin-top: 12px; gap: 8px;">
+                    <button onclick="saveLayoutToBrowser()" style="flex: 1; height: 36px; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px;">💾 Lưu Giao Diện</button>
+                    <button onclick="loadLayoutFromBrowser()" style="flex: 1; height: 36px; background: #0ea5e9; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px;">📂 Tải Giao Diện Cũ</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB OTA TÍCH HỢP -->
+        <div id="tab-ota" class="tab-content">
+            <div class="card">
+                <h3>CẬP NHẬT PHẦN MỀM</h3>
+                <button id="upfirm-button" class="action-btn" style="background: #e11d48; font-weight: bold;" onclick="onUpdate()">Bắt đầu nạp OTA</button>
+                
+                <!-- GIAO DIỆN TIẾN TRÌNH NÂNG CẤP ĐÃ ĐƯỢC LÀM ĐẸP -->
+                <div id="progress-container" class="hidden">
+                    <div class="progress-header">
+                        <span class="progress-title">
+                            <span class="spinner-icon" id="progress_spinner"></span> 
+                            Trạng thái nâng cấp
+                        </span>
+                        <span id="update_progress_text">0%</span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="update_progress_bar" class="progress-bar-fill"></div>
+                    </div>
+                    <div id="update_progress">Sẵn sàng tải...</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; width:100%; margin-top:5px; font-size:11px; font-weight:bold; color:#555; padding:0 4px; box-sizing: border-box;">
+            <span>NHẬT KÝ HỆ THỐNG</span>
+            <button class="clear-log-btn" onclick="clearLog()">Xóa</button>
+        </div>
+        <pre id="log"></pre>
+    </div>
+
+<script>
+     const MY_HARDCODED_ICONS = {
+        "icon1": "data:image/bmp;base64,Qk0OAwAAAAAAAD4AAAAoAAAANAAAAFoAAAABAAEAAAAAANACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD////////wAP////////AA////////8AD////////wAP////////AA////////8AD////////wAP////8///AA/////B//8AD////4H//wAP////Af//AA/////x//8AD/z///H//wAP+H//8P//AA/4f//w//8AD/g///D//wAP+D//8P//AA/4H//w//8AD/4f//D//wAP/x//8P//AA//j//w//8AD/+P//D//wAP/8/h8P//AA//58Aw//8AD//ngBD//wAP//eAMP//AA/+c44w//8AD/AbgBD//wAP4BuAGP//AA/Af8AY//8AD////hD//wAP////8P//AA//+H/w//8AD//wH/D//wAP/+AD8P//AA///gBg//8AD/4P8AAB/wAP/gf/AAH/AA/+B//wA/8AD/4P/////wAP/g//////AA/8H/////8AD/h//////wAP////////AA////////8AD////////wAP////////AA////////8AD////////wAP////////AA////////8AD////////wAP////////AA//+f////8AD//4///+DwAP//CP//gPAA//8MP/4A8AD/8w8P/APwAP/hD4/4B/AA/+EPx/Af8AD/4A/j4H/wAP/gD+PB//AA//AP8Yf/8AD/+AfwD//wAP/4B/g///AA//wD+H//8AD8HAH4///wAPgGAPB///AA8AAMYD//8AD/AA4MH//wAP/ADwwH//AA//AHnAP/8AD//AH8Qf/wAP//AHxh//AA//+AfHD/8AD//4b8AP/wAP//h/wA//AA//+H/AH/8AD/8A/8f//wAP/8Afw///AA//8A/D//8AD//4B4f//wAP//wPB///AA///g/f//8AD//+D////wAP//4f////AA///n////8AD////////wAP////////AA////////8AA=",
+        "icon2": "data:image/bmp;base64,Qk1WAQAAAAAAAD4AAAAoAAAAKwAAACMAAAABAAEAAAAAABgBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////+AAAP////3/4AAA////+P/gAAD////wf+AAAP///+A/4AAA////wB/gAAD///+AD+AAAP///wAH4AAA///+AAPgAAD///wAAeAAAP//+AAA4AAA///4AADgAAD///AAAGAAAP//8AAAYAAA///gAAAgAAD//+AAACAAAP//8AAAYAAA///wAABgAAD/5/ACAOAAAP/D+AcA4AAA/4H+D4PgAAD/AP///+AAAP4Af///4AAA/AA////gAAD4AB///+AAAPAAH///4AAA4AAP///gAADgAA///+AAAOAAB///4AAA4AAH///gAADgAA///+AAAPAQD///4AAA+Dgf///gAAD//////+AAAP//////4AAA",
+		"icon3": "data:image/bmp;base64,Qk1GBAAAAAAAAD4AAAAoAAAAVAAAAFYAAAABAAEAAAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////////8AD/////////////8AD/////////////8AD///wAAAAAA///8AD//4AAAAAAAB//8AD//gAAAAAAAAf/8AD/+AAAAAAAAAH/8AD/4AAAAAAAAAB/8AD/wAAAAAAAAAA/8AD/gAAAAAAAAAAf8AD/AAAP////AAAP8AD+AA///////wAH8AD8AH///////+AD8AD8AP////////AD8AD4A/////////wB8AD4B/////////4B8ADwB/////////4A8ADwD/////////8A8ADgH/////////+AcADgH/////////+AcADgH/////////+AcADgP//////////AcADgP////gf////AcADAP///4AB////AMADAP///gAAf///AMADAP//+AAAH///AMADAP//8AAAD///AMADAP//wAAAA///AMADAP//gAAAAf//AMADAf//AAAAAP//gMADAf//AA/wAP//gMADAf/+AD/8AH//gMADAf/8AP//AD//gMADAf/8Af//gD//gMADAf/4A///wB//gMADAf/4B///4B//gMADAf/wB///4A//gMADAf/wD///8A//gMADAf/wD///8A//gMADAf/wH///+A//gMADAf/gH///+Af/gMADAf/gH///+Af/gMADAf/gH///+Af/gMADAf/wH///+A//gMADAf/wD///8A//gMADAf/wD///8A//gMADAf/wD///4A//gMADAf/4B///4B//gMADAf/4A///wB//gMADAf/8Af//gD//gMADAf/8AP//AD//gMADAf/+AH/+AH//gMADAf//AA/wAP//gMADAf//AAAAAP//gMADAP//gAAAAf//AMADAP//wAAAA///AMADAP//8AAAD/v/AMADAP//+AAAH8D/AMADAP///gAAf4B/AMADAP///4AB/4A/AMADgP////gf/4A/AcADgP///////wA/AcADgH///////4A+AcADgH///////4A+AcADgH///////8B+AcADwD///////+D8A8ADwB/////////4A8AD4B/////////4B8AD4A/////////wB8AD8AP////////AD8AD8AH///////+AD8AD+AA///////wAH8AD/AAAP////AAAP8AD/gAAAAAAAAAAf8AD/wAAAAAAAAAA/8AD/4AAAAAAAAAB/8AD/+AAAAAAAAAH/8AD//gAAAAAAAAf/8AD//4AAAAAAAB//8AD///wAAAAAA///8AD/////////////8AD/////////////8AD/////////////8AA=",
+		"icon4": "data:image/bmp;base64,Qk0iBAAAAAAAAD4AAAAoAAAAVQAAAFMAAAABAAEAAAAAAOQDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////////+AD/////////////+AD/////////////+AD//////5//////+AD//////w//////+AD//////gf/////+AD/////+AH/////+AD/////8AD/////+AD/////4AB/////+AD/////wAA/////+AD/////AAAP////+AD////+AAAH////+AD////8AAAD////+AD////4AAAB////+AD////wAAAA////+AD////gAAAAf///+AD////AAAAAH///+AD///8AAAAAD///+AD///4AAAAAB///+AD///wAAAAAA///+AD///gAAAAAAf//+AD///AAAAAAAP//+AD//+AAAAAAAH//+AD//8AAAAAAAD//+AD//8AAAAAAAD//+AD//4AAAAAAAB//+AD//wAAAAAAAA//+AD//gAAAAAAAAf/+AD//AAAAAAAAAP/+AD/+AAAAAAAAAH/+AD/8AAAAAAAAAD/+AD/8AAAAAAAAAD/+AD/4AAAAAAAAAB/+AD/wAAAAAAAAAA/+AD/gAAAAAAAAAAf+AD/gAAAAAAAAAAf+AD/AAAAAAAAAAAP+AD/AAAAAAAAAAAP+AD+AAAAAAAAAAAH+AD8AAAAAAAAAAAD+AD8AAAAAAAAAAAD+AD4AAAAAAAAAAAB+AD4AAAAAAAAAAAB+ADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+ADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADAAAAAAAAAAAAAOADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADgAAAAAAAAAAAAeADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+ADwAAAAAAAAAAAA+AD4AAAAAAAAAAAB+AD8AAAAAAAAAAAD+AD8AAAAAGAAAAAD+AD+AAAAAPAAAAAH+AD/AAAAAfgAAAAP+AD/gAAAA/wAAAAf+AD/wAAAB/4AAAA/+AD/4AAAD/8AAAB/+AD/+AAAH/+AAAH/+AD//gAAf//gAAf/+AD//4AB///4AB//+AD///gf////gf//+AD/////////////+AD/////////////+AD/////////////+AD/////////////+AD/////////////+AA=",
+		"icon5": "data:image/bmp;base64,Qk1eBAAAAAAAAD4AAAAoAAAAWQAAAFgAAAABAAEAAAAAACAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////4D//////4D//////gAf/////4D//////AAP/////4D/////+AAH/////4D/////8AAD/////4D/////8AAD/////4D/////4AAD/////4D///8P4D4B/////4D///wD4D8B8B///4D///AAgH8AwAf//4D//+AAAH+AAAP//4D//8AAAH+AAAH//4D//4AAAH+AAAD//4D//4AAAP/AAAB//4D//wBwA//wAYB//4D//wD4D//4B8A//4D//wH8H//+D+A//4D//wP//////+A//4D//wH//////+A//4D//wH//////+A//4D//wD//////8A//4D//wD//////8B//4D//4B//////4B//4D//8A//////wD//4D//8A///P//wD//4D//4B//4B//wD//4D//4B//gAf/4B//4D/+AD//AAP/8AP/4D/8AH/+AAH/8AD/4D/4AH/8AAD/+AB/4D/wAP/4AAB/+AA/4D/gAP/wAwA//AA/4D/gA//wD8A//gAf4D/gP//gH+Af/+Af4D/gf//gP/Af//Af4D/Af//gP/Af//gP4D/Af//gf/gf//gP4D/Af//gP/Af//gP4D/gf//gP/Af//gP4D/gP//gH+Af//Af4D/gA//wD8A//4Af4D/gAP/wB4A//gAf4D/wAP/4AAB//AA/4D/4AH/8AAD/+AA/4D/8AH/8AAD/+AB/4D/+AD/+AAH/8AH/4D//wB//gAf/8Af/4D//4B//wA//4B//4D//8A//8D//wD//4D//8A//////wD//4D//4B//////4B//4D//4B//////4B//4D//wD//////8A//4D//wH//////+A//4D//wH//////+A//4D//wH///////A//4D//wH+P///H+A//4D//wD8D//8B+A//4D//wBwA//4A8A//4D//4AAAP/gAAB//4D//8AAAH/AAAB//4D//8AAAH+AAAD//4D//+AAAH+AAAH//4D///AAAH+AAAP//4D///wB4D+A4Af//4D///8H4D8B+B///4D/////4B4B/////4D/////8AAB/////4D/////8AAD/////4D/////+AAD/////4D//////AAH/////4D//////gAP/////4D//////4A//////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4A=",
+        "icon6": "data:image/bmp;base64,Qk1qBAAAAAAAAD4AAAAoAAAAVwAAAFkAAAABAAEAAAAAACwEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////gD//////////////gD//////////////gD//////////////gD/////5/+f/////gD////+B/+B/////gD////wB/+AP////gD////AB/+AD////gD///8AB/+AA////gD///wAB/+AAP///gD///gAB/+AAH///gD//+AAB/+AAB///gD//8AAB/+AAA///gD//4AAB/+AAAf//gD//wAAB/+AAAP//gD//gAAB/+AAAH//gD//AAAB/+AAAD//gD/+AAAB/+AAAB//gD/8AAAB/+AAAA//gD/4AAAB/+AAAAf/gD/wAAAB/+AAAAP/gD/wAAAB/+AAAAP/gD/gAAAB/+AAAAH/gD/AAAAB/+AAAAD/gD/AAAAB/+AAAAD/gD+AAAAB/+AAAAB/gD+AAAAB/+AAAAB/gD8AAAAB/+AAAAA/gD8AAAAB/+AAAAA/gD8AAAAB/+AAAAA/gD4AAAAB/+AAAAAfgD4AAAAB/+AAAAAfgD4AAAf////4AAAfgDwAAAf////4AAAPgDwAAAf////4AAAPgDwAAAf////4AAAPgDwAAAf////4AAAPgDwAAAf////4AAAPgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAf////8AAAHgDgAAAAD//AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDgAAAAB/+AAAAAHgDwAAAAB/+AAAAAPgDwAAAAB/+AAAAAPgDwAAAAB/+AAAAAPgDwAAAAB//AAAAAPgDwAAAAB//AAAAAPgD4AAAAB//gAAAAfgD4AAAAB//wAAAAfgD4AAAAB///+AAAfgD8AAAAA///+AAA/gD8AAAAA///+AAA/gD+AAAAAf//+AAB/gD+AAAAAf//+AAB/gD/AAAAAP//+AAD/gD/AAAAAH//+AAD/gD/gAAAAD//+AAH/gD/gAAAAB//+AAH/gD/wAAAAAf/+AAP/gD/4AAAAAD/wAAf/gD/8AAAAAAAAAA//gD/+AAAAAAAAAB//gD/+AAAAAAAAAB//gD//AAAAAAAAAD//gD//gAAAAAAAAH//gD//wAAAAAAAAP//gD//8AAAAAAAA///gD//+AAAAAAAB///gD///AAAAAAAD///gD///wAAAAAAP///gD///4AAAAAAf///gD///+AAAAAB////gD////gAAAAH////gD////8AAAA/////gD/////gAAH/////gD//////4f//////gD//////////////gD//////////////gD//////////////gD//////////////gD//////////////gA=",
+        "icon7": "data:image/bmp;base64,Qk1GBAAAAAAAAD4AAAAoAAAAWAAAAFYAAAABAAEAAAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////wD//////////////wD//////////////wD//////////////wD//////////////wD//////////////wCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCAAAAB///gAAAAfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//8B///gP//AfwCA//+A///Af//AfwCA//+AAAAAf//AfwCA//+AAAAAf//AfwCA///AAAAA///AfwCA///gAAAB///AfwCA///wAAAD///AfwCA///4AAAH///AfwCA///+AAAf///AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCA///////////AfwCAf/////////+AfwDAH/////////4A/wDAD/////////wA/wDgB/////////gB/wDwA///////// AD/wD4AP///////8AH/wD8AH///////4AP/wD/AD///////wAf/wD/gA///////AA//wD/wAf/////+AA//wD/4AP/////8AA//wD/+AH/////4AA//wD//AB/////gAA//wD//gA/////ABA//wD//wAf///+ADA//wD//8AH///4APA//wD//+AD///wAfA//wD///AB///gA/A//wD///wA///AD/A//wD///4AP/8AH/A//wD///8AH/4AP/A//wD///+AD/wAf/A//wD////gA/AB//A//wD////wAeAD//A//wD////4AAAH/////wD////+AAAf/////wD/////AAA//////wD/////gAB//////wD/////wAD//////wD/////8AP//////wD//////A///////wA=",
+        "icon8": "data:image/bmp;base64,Qk3WBAAAAAAAAD4AAAAoAAAAXwAAAGIAAAABAAEAAAAAAJgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////AA//////7//////4AAH/////7//////wAAD/////7//////gAAB/////7//////AAAA/////7//////AAAA/////7/////+AAAAf////7/////+Af+Af////7/////+A//Af////7/////+B//gf////7/////+B//gf////7/////+B//gf////7/////8B//gf////7/////8AAAAP////7/////8AAAAP////7/////8AAAAP////7/////4AAAAH////7/////4AAAAH////7/////wAAAAD////7/////gAAAAB////7/////AH4H4A////7////+AP4H8Af///7////8Af4H+AP///7////4A/4H/AH///7////wB/4H/gD///7////wD/4H/wD///7////gH/4H/4B///7//// AP/4H/8A///7////AP/4H/8A///7////Af/4H/+A///7///+A//4H//Af//7///+A//4H//Af//7///8B//4H//gP//7///8B//4H//gP//7///8B//gB//gP//7///8B//AA//gP//7///8D/+AAf/wP//7///4D/8AAP/wH//7///4D/4AAH/wH//7///4D/4AAH/wH//7///4D/wDwD/wH//7///4D/wH4D/wH//7///4D/wH4D/wH//7///8D/wH4D/wP//7///8B/wP8D/gP//7///8B/4P8H/gP//7///8B/+//f/gP//7///8B//////gP//7///+A//////Af//7///+A//////Af//7////Af////+A///7////AP////8A///7////gP////8A///7////gH////4B///7////wD////wD///7//4PwB////gD8H/7//gP4Af//+AH4B/7/+AH8AP//8AP4Af7/4AH+AD//wAf4AH7/wAP/AAP8AA/4AD7/wAf/gAAAAB/8AD7/wA//wAAAAD//AD7/4H//8AAAAP//wD7/4f///AAAAf//8H7//////wAAD/////7//////8AAP/////7///////4H//////7////4f////+H///7////wP////8D///7////gP////8D///7////gP////B///7////AP////8A///7////Af////8A///7///+Af////+Af//7///8A//////Af//7///8B//////AP//7///8B//////gP//7///8D//////gP//7///8D//////wP//7///+H//////4f//7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////4=",
+        "icon9": "data:image/bmp;base64,Qk3eBQAAAAAAAD4AAAAoAAAAYQAAAFoAAAABAAEAAAAAAKAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////+AAAAA////////////////gAAAAP///////////////4AAAAD///////////////+AAAAA////////////////gAAAAP///////////////4AAAAD///////////////+AAAAA///gAAH//8AH////gAAAAP//gAAA//4AAP///4AAAAD//gAAAP/4AAAf//+AAAAA//gAAAD/4AAAD///gAAAAP/wAAAA/8AAAAP//4AAAAD/4AAAAf8AAAAB//+AAAAA/8AAAAf+AAAAAP//gAAAAP/AH////AA/+AB//4AAAAD/gD////wA//4AP/+AAAAA/4B////4A///gB//gAAAAP8A////8Af//8Af/4AAAAD/Af///+AP///wD/+AAAAA/wH////gH///8A//gAAAAP4D////wD////gH/4AAAAD+A////8B////8B/+AAAAA/gP////Af////AP/gAAAAP4D////gP////4D/4AAAAD+A////4D//4f+A/+AAAAA/gP///+A//8D/wP/gAAAAP4D////gf/+A/8B/4AAAAD+A////4H//AP/Af+AAAAA/gP///8B//gD/wH/gAAAAP4D////Af/wB/8B/4AAAAD+A////wH/8A//Af+AAAAA/gP///8B//Af/wH/gAAAAP4D////gf/wH/8B/4AAAAD+A////4H/8B//Af+AAAAA/gP///+A//Af/wH/gAAAAP4D////gP/wH/4D/4AAAAD+A////4D/8B/+A/+AAAAA/gP////Af/Af/gP/gAAAAP4D////wH/4H/wH/4AAAAD+A////8A//D/4B/+AAAAA/gP////gH///+Af/gAAAAP4D////4A////AP/4AAAAD+A/////AH///gH/+AAAAA/gP////4A///wB//gAAAAP4D////+AH//wA//4AAAAD+A/////wAf/wAf/+AAAAA/gP////+AAfAAP//gAAAAP4D/////wAAAAH//4AAAAD+A/////+AAAAD//+AAAAA/gP/////4AAAB///gAAAAP4D//////AAAB///4AAAAD+A//////+AAB///+AAAAA/gP//////4AD////gAAAAP4D/////////////4AAAAD+AAAAAAP/////g/+AAAAA/gAAAAAB/////4H/gAAAAP4AAAAAAf////8B/4AAAAD+AAAAAAH/////Af+AAAAA/gAAAAAB/////wH/gAAAAP4AAAAAA/////8B/4AAAAD+A///////////Af+AAAAA/gP//////////wH/gAAAAP4D//////////8B/4AAAAD+A///////////Af+AAAAA/gP//////////wH/gAAAAP4D//////////8B/4AAAAD+A///////////Af+AAAAA/wH//////////gP/gAAAAP8B//////////4D/4AAAAD/AP/////////8A/+AAAAA/4D//////////Af/gAAAAP+AP/////////AH/4AAAAD/wB/////////gD/+AAAAA/8AB///////+AA//gAAAAP/gAAAAAAAAAAAf/4AAAAD/8AAAAAAAAAAAP/+AAAAA//gAAAAAAAAAAH//gAAAAP/+AAAAAAAAAAH//4AAAAD//wAAAAAAAAAD//+AAAAA///gAAAAAAAAH///gAAAAP///+A////wH////4AAAAD////gP///8B////+AAAAA////4D////Af////gAAAAP///+A////wH////4AAAAD////gf///+B////+AAAAA////8H////g/////gAAAAP////j////8f////4AAAAD///////////////+AAAAA////////////////gAAAAP///////////////4AAAAA=",
+        "icon10": "data:image/bmp;base64,Qk2OBAAAAAAAAD4AAAAoAAAAXgAAAFwAAAABAAEAAAAAAFAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z//+AAAA//wAf///z//4AAAB/+AAD///z//gAAAD/4AAAf//z/+AAAAH/gAAAP//z/8AAAAP/AAAAD//z/4AAAAf8AAAAB//z/wAAAAf4AAAAA//z/wAAAA/wAAAAAf/z/gAAAA/wAAAAAP/z/gAAAB/gAAAAAH/z/AAAAD/AAAAAAH/z/AAAAD+AAAAAAD/z/AAAAD+AAAAAAD/z+AAAAH8AAAAAAB/z+AAAAH8AAAAAAB/z+AAAAH8AAAAAAA/z+AAAAP4AAADwAA/z+AAAAP4AAAH4AA/z+AAAAP4AAAP4AA/z+AAAAP4AAAf4AAfz+AAAAP4AAA/4AAfz+AAAAPwAAB/wAAfz+AAAAPwAAD/gAAfz+AAAAPwAAD/AAAfz+AAAAPwAAD+AAAfz+AAAAPwAAD+AAAfz+AAAAP4AAD+AAAfz+AAAAP4AAD+AAAfz+AAAAP4AAD+AAA/z+AAAAP4AAD+AAA/z+AAAAH4AAD+AAA/z+AAAAH8AAB+AAB/z+AAAAH8AAA8AAB/z+AAAAD+AAAAAAB/z+AAAAD+AAAAAAD/z+AAAAD/AAAAAAH/z+AAAAB/gAAAAAH/z+AAAAB/gAAAAAP/z+AAAAA/wAAAAAf/z+AAAAA/4AAAAA//z+AAAAAf8AAAAB//z+AAAAAP+AAAAD//z+AAAAAH/gAAAH//z+AAAAAD/wAAAf//z+AAAAAB/8AAB///z+AAAAAA//gAP///z+AAAAAA///H////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz+AAAAAAAAAAAAAfz/AAAAAAAAAAAAA/z/AAAAAAAAAAAAA/z/AAAAAAAAAAAAA/z/gAAAAAAAAAAAB/z/gAAAAAAAAAAAB/z/wAAAAAAAAAAAD/z/wAAAAAAAAAAAD/z/4AAAAAAAAAAAH/z/8AAAAAAAAAAAP/z/+AAAAAAAAAAAf/z//gAAAAAAAAAB//z//wAAAAAAAAAD//z//+AAAAAAAAAf//z////gP///8B////z////gP///8B////z////gP///8B////z////gP///8B////z////gf///+B////z////wf///+D////z////4/////H////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////w=",
+        "icon11": "data:image/bmp;base64,Qk3CAwAAAAAAAD4AAAAoAAAAXgAAAEsAAAABAAEAAAAAAIQDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////wP//////z///////gH//////z///////AD//////z//////+AB//////z//////+AB//////z//////8AA//////z//////8AA//////z//////8AA//////z//////+AB//////z//////+AB//////z///////AD//////z///////gH//////z///////wP//////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z////8f////4////z////wH////gP///z////gD////AH///z////gB///+AH///z////AA///8AD///z////AAP//wAD///z////AAB/+AAH///z////gAADAAAH///z////wAAAAAAP///z////4AAAAAAf///z////8AAAAAA////z////+AAAAAB////z/////AAAAAD////z/////wAAAAP////z/////8AAAA/////z//////AAAD/////z/8P///4AAf///w/z/wD////8/////APz/wB/////////+APz/gA/////////8AHz/gAf////////4AHz/gAP////////wAHz/gAH////////gAHz/wAB///////+AAPz/4AA///////8AAfz/8AAP//////wAA/z/+AAD//////AAB/z//AAA/////8AAD/z//gAAH////gAAH/z//wAAA///8AAAP/z//4AAAB/+AAAAf/z//+AAAAAAAAAB//z///AAAAAAAAAD//z///wAAAAAAAAP//z///8AAAAAAAA///z////AAAAAAAD///z////wAAAAAAP///z////8AAAAAA////z/////gAAAAH////z/////+AAAB/////z//////+AB//////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////z///////////////w=",
+        "icon12": "data:image/bmp;base64,Qk2eBAAAAAAAAD4AAAAoAAAAYwAAAEYAAAABAAEAAAAAAGAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD////////////////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA////////////////4AAAAP//+AAAAAAAAB///+AAAAD//wAAAAAAAAAA///gAAAA//wAAAAAAAAAAD//4AAAAP/4AAAAAAAAAAAf/+AAAAD/8AAAAAAAAAAAD//gAAAA/+AAAAAAAAAAAAf/4AAAAP/AAAAAAAAAAAAD/+AAAAD/wAAAAAAAAAAAA//gAAAA/8AAAAAAAAAAAAP/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAIAAAAAAAf/gAAAA/wAAAADgAAAAAAD/4AAAAP8AAAAA+AAAAAAA/+AAAAD/AAAAAPwAAAAAAP/gAAAA/wAAAAD/AAAAAAD/4AAAAP8AAAAA/8AAAAAA/+AAAAD/AAAAAP/wAAAAAP/gAAAA/wAAAAD/+AAAAAD/4AAAAP8AAAAA//4AAAAA/+AAAAD/AAAAAP//gAAAAP/gAAAA/wAAAAD//+AAAAD/4AAAAP8AAAAA///wAAAA/+AAAAD/AAAAAP//4AAAAP/gAAAA/wAAAAD//8AAAAD/4AAAAP8AAAAA//8AAAAA/+AAAAD/AAAAAP/8AAAAAP/gAAAA/wAAAAD/8AAAAAD/4AAAAP8AAAAA/+AAAAAA/+AAAAD/AAAAAP+AAAAAAP/gAAAA/wAAAAD+AAAAAAD/4AAAAP8AAAAA+AAAAAAA/+AAAAD/AAAAAPAAAAAAAP/gAAAA/wAAAADAAAAAAAD/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/gAAAAAAAAAAAAf/gAAAA/4AAAAAAAAAAAAH/4AAAAP+AAAAAAAAAAAAB/+AAAAD/wAAAAAAAAAAAA//gAAAA/8AAAAAAAAAAAAP/4AAAAP/AAAAAAAAAAAAD/+AAAAD/4AAAAAAAAAAAB//gAAAA/+AAAAAAAAAAAAf/4AAAAP/wAAAAAAAAAAAP/+AAAAD/+AAAAAAAAAAAH//gAAAA//4AAAAAAAAAAH//4AAAAP//wAAAAAAAAAP//+AAAAD////8AAAAAD/////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA////////////////4AAAAP///////////////+AAAAD////////////////gAAAA",
+        "icon13": "data:image/bmp;base64,Qk3uBAAAAAAAAD4AAAAoAAAAXwAAAGQAAAABAAEAAAAAALAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7//////wAA//////7/////8AAAD/////7/////gAAAAf////7////+AAAAAH////7////4AAAAAB////7////gAAAAAAf///7////AAAAAAAP///7///8AAAAAAAD///7///4AAAAAAAB///7///wAAAAAAAA///7///gAAD/8AAAf//7///AAA///wAAP//7//+AAD///+AAH//7//8AAf////gAD//7//4AA/////wAB//7//wAD/////8AA//7//gAH//5//+AA//7//gAP/4AB//AAf/7//AAf/AAAP/gAP/7//AA/8AAAD/wAP/7/+AB/4AAAB/4AH/7/8AD/gAAAAf8AD/7/8AH/AAAAAP+AD/7/8AH+AAAAAH+AD/7/4AP8AAAAAD/AB/7/4AP4AAAAAB/AB/7/wAf4AAAAAB/gA/7/wAfwAD/4AA/gA/7/wA/wAP/+AA/wA/7/gA/gAf//gAfwAf7/gA/gA///wAfwAf7/gB/AB///wAP4Af7/gB/AD///4AP4Af7/gB/AD/w/8AP4Af7/AB+AH/AP8AH4AP7/AD+AH+AH8AH8AP7/AD+AP8AD+AH8AP7/AD+AP8AD+AH8AP7/AD+AP4AD+AH8AP7/AD+AP4AB/AH8AP7/AD+AP4AB/gH8AP7/AD+AP4AB/gH8AP7/AD+AP8AB/wH8AP7/AD+AP8AB/4H8AP7/AD+AP8AA/8H8AP7/AD+AH+AAf+H8AP7/gB/AH/gAH/P4Af7/gB/AD//AH/v4Af7/gB/AD//gD//4Af7/gB/AB//wB//4Af7/gA/gA//4A//4Af7/wA/gAf/8AP//w/7/wA/wAH/+AP//4/7/wAfwAA//AH//8/7/wAf4AAD/gB////7/4AP8AAB/wB////7/4AP+AAA/4Af///7/8AH+AAAf8AAD//7/8AD/AAAP+AAB//7/8AD/wAAH/AAA//7/+AB/4AAD/gAAf/7//AA/+AAB/wAAP/7//AAf/gAB/4AAH/7//gAP/8AD/4AAD/7//wAH/////4AAB/7//wAB/////4AAA/7//4AA/////4AAAf7//8AAP////4Af//7//+AAD////4Af//7///AAAf//v4Af//7///gAAB/4P4Af//7///wAAAAAP4Af//7///4AAAAAP8Af//7///+AAAAAP+Af//7////AAAAAH/Af//7////wAAAAD/gf//7////8AAAAB/wf//7/////AAAAA/4f//7/////4AAAB/8f//7//////AAAP/+f//7///////AP//////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////7///////////////4=",
+        "icon14": "data:image/bmp;base64,Qk2CBAAAAAAAAD4AAAAoAAAAVAAAAFsAAAABAAEAAAAAAEQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD/////////////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AD//////w//////8AD/////gAAf////8AD////4AAAB////8AD////gAAAAf///8AD///8AAAAAD///8AD///wAAAAAA///8AD///gAAAAAAf//8AD//+AAAAAAAH//8AD//8AAAAAAAD//8AD//4AAAAAAAB//8AD//gAAAAAAAAf/8AD//AAAAAAAAAP/8AD/+AAB/gAAAAH/8AD/8AAP/8AAAAD/8AD/8AA///AAAAD/8AD/4AB///wAAAB/8AD/wAH///4AAAA/8AD/gAP///8AAAAf8AD/gAf///+AAAAf8AD/AAf////AAAAP8AD+AA/////AAAAH8AD+AB/////gAAAH8AD8AB//Af/wAAAD8AD8AD/8AP/wAAAD8AD4AD/4AH/wAAAB8AD4AD/wAD/4AAAB8AD4AD/wAB/4AAAB8ADwAH/gAB/4AAAA8ADwAH/gAB/4AAAA8ADgAH/gAB/4AAAAcADgAH/gAB/4AAAAcADgAH/gAB/4AAAAcADgAH/gAB/4AAAAcADgAD/wAB/4AAAAcADAAD/wAB/4AAAAMADAAD/4AB/4AAAAMADAAD/8AB/4AAAAMADAAB//AB/4AAAAMADAAB///B/4AAAAMADAAA///B/4AAAAMADAAAf//B/4AAAAMADAAAf//B/4AAAAMADAAAP//B/4AAAAMADAAAH//B/4AAAAMADAAAB//B/4AAAAMADAAAA//B/4AEAAMADAAAAP/B/4D+AAMADgAAAB/B/4f+AAcADgAAAAAB/5/+AAcADgAAAAAB/7/+AAcADgAAAAAB///+AAcADwAAAAAB///+AA8ADwAAAAAB///+AA8ADwAAAAAB///+AA8ADtext////+AB8AD4AAAAAB///+AB8AD4AAAAAB///wAB8AD4AAAAAB//+AAB8AD8AAAAAB//4AAD8AD8AAAAAB//wAAD8AD+AAAAAB//gAAH8AD+AAAAAB//AAAH8AD/AAAAAB/+AAAP8AD/gAAAAB/+AAAf8AD/gAAAAB/8AAAf8AD/wAAAAB/8AAA/8AD/4AAAAB/8AAB/8AD/8AAAAB/4AAD/8AD/+AAAAB/4AAH/8AD/+AAAAB/4AAH/8AD//gAAAAAAAAf/8AD//wAAAAAAAA//8AD//4AAAAAAAB//8AD//8AAAAAAAD//8AD///AAAAAAAH//8AD///gAAAAAAf//8AD///4AAAAAB///8AD///+AAAAAH///8AD////gAAAAf///8AD////8AAAD////8AD/////gAAf////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AD/////////////8AA=",
+        "icon15": "data:image/bmp;base64,Qk3iBAAAAAAAAD4AAAAoAAAAWQAAAGMAAAABAAEAAAAAAKQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D/v//////3/////4D+D//////B/////4D8D//////A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D8B/////+A/////4D+B/////+B/////4D+A/////8B/////4D+A/////8B/////4D+Af////4B/////4D/Af////4D/////4D/AP////wD/////4D/gP////wH/////4D/gH////gH////j4D/wD//// AP////B4D/wB///+AP////A4D/4Af//4Af///+A4D/8AP//wA////+A4D/+AD//AB////+A4D//AAPwAD////+A4D//gAAAAH////+A4D//wAAAAP////+B4D//4AAAAf////8B4D//+AAAB/////8B4D///gAAH/////4B4D///8AA//////4D4D////////////wD4D////////////gH4D///////8f///AH4D///////4P//+AP4D///////wD//8Af4D///////wA//wA/4D///////wAP+AA/4D////gP/4AAAAB/4D///+AB/8AAAAH/4D///4AAf+AAAAP/4D///gAAP/gAAA//4D///AAAD/4AAB//4D//+AAAD/+AAP//4D//+AAAB//4D///4D//8APwA///////4D//8A/8A///////4D//4B/+Af//////4D//4D//Af//////4D//wD//AP//////4D//wH//gP//////4D//wH//gP//j///4D//wH//gP/4AP//4D//wH//gP/gAD//4D//wH//gP+AAB//4D//wH//gP8AAAf/4D//wH//gP4AAAP/4D//4D//AfwAAAP/4D//4B/+AfwA+AH/4D//4A/8AfgD/gD/4D//8Af4A/gP/wD/4D//+AAAB/AP/4D/4D//+AAAB/Af/8B/4D///AAAD/Af/8B/4D///gAAH/A//8B/4D///4AAf+A//+B/4D///8AA/+A//+B/4D////gH/+A//+B/4D////////A//8B/4D////////Af/8B/4D////////Af/8B/4D////////AP/4D/4D////////gH/wD/4D////////gD/gD/4D////////wA8AH/4D////////wAAAP/4D////////4AAAf/4D////////8AAAf/4D////////+AAB//4D/////////gAD//4D/////////4Af//4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4D//////////////4A=",
+        "icon16": "data:image/bmp;base64,Qk1eBAAAAAAAAD4AAAAoAAAAVwAAAFgAAAABAAEAAAAAACAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD//////////////gD//////////////gD//////////////gD//////////////gD//////wD//////gD/////wAAD/////gD////+AAAAf////gD////wAAAAD////gD////AAAAAA////gD///8AAAAAAP///gD///4AAAAAAH///gD///gAA//AAB///gD///AAP//8AA///gD//8AB////gAP//gD//4AH////4AH//gD//wAf////+AD//gD//gA//////AB//gD//AD//////wA//gD/+AH//////4Af/gD/+AP//////8Af/gD/8Af//////+AP/gD/4A////////AH/gD/wB////////gD/gD/wD////////wD/gD/gH////////4B/gD/gP////////8B/gD/AP////////8A/gD/Af////////+A/gD+Af////////+AfgD+A//////////AfgD8A//////////APgD8B//////////gPgD8B//////////gPgD4D//8///////gHgD4D//4P//////wHgD4D//wD//////wHgD4D//wB//////wHgD4H//wAf/////4HgDwH//wAP/////4DgDwH//8AD/////4DgDwH//+AA/////4DgDwH///gAf////4DgDwH///wAP////4DgDwH///8AH////4DgDwH////AH////4DgDwH////gH////4DgDwH////wH////4DgDwH////4H////4DgDwH////4H////4DgDwH////4H////4DgD4H////4H////4HgD4H////4H////4HgD4D////4H////wHgD4D////4H////wHgD4D////4H////wHgD8B////4H////gPgD8B////4H////gPgD8B////4H////gPgD+A////4H////AfgD+A////4H////AfgD+Af///4H///+AfgD/Af///4H///+A/gD/AP///4H///8A/gD/gH///8P///4B/gD/wD////////wD/gD/wD////////wD/gD/4B////////gH/gD/4A////////AH/gD/8Af//////+AP/gD/+AP//////8Af/gD//AH//////4A//gD//gB//////gB//gD//wA//////AD//gD//4AP////8AH//gD//8AD////wAP//gD//+AA////AAf//gD///AAH//4AA///gD///wAADwAAD///gD///4AAAAAAH///gD///+AAAAAAf///gD////gAAAAB////gD////4AAAAH////gD/////AAAA/////gD/////8AAP/////gD//////////////gD//////////////gD//////////////gD//////////////gA=",
+        "icon17": "data:image/bmp;base64,Qk1SBAAAAAAAAD4AAAAoAAAAXQAAAFcAAAABAAEAAAAAABQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////j///////////////j///////////////j///////////////j///////////////j///////////////j///////////////j////8P////8P///j////gB////gB///j///+AAf//+AA///j///8AAP//8AAP//j///4AAH//4AAP//j///4AAB//gAAH//j///wAAA//AAAD//j///wDwAf+ADwD//j///gH8AH4AP4D//j///gP+ADwAf8B//j///gP/ABgA/8B//j///gP/wAAD/8B//j///gP/4AAH/8B//j///wH/8AAP/4D//j///wH//AA//4D//j///wH//gB//4D//j///wH//wD//4D//j///4D//8P//wH//j///4D//////wH//j///4D//////wH//j///8B//////gP//j///8B//////gP//j///8B//////gP//j///+A//////Af//j///+A//////Af//j///+A//////Af//j////Af////+A///j////Af////+A///j////Af////+A///j///+AP////8Af//j///4Af////+AH//j///wAf////+AD//j///gA//////AB//j//+AD//////wAf/j//8AH//////4AP/j//wAP//////8AD/j//gA////////AB/j//AB////////gA/j/+AD////////wAfj/8AP////////8APj/4Af////////+AHj/4B//////////gHj/4D//////////wDj/wH//////////4Dj/wH//////////4Dj/wH//////////4Dj/wH//////////4Dj/wH//////////4Dj/wD//////////wDj/4B//////////gHj/4AAAAP//8AAAAHj/8AAAAH//4AAAAPj/+AAAAH//4AAAAPj//AAAAH//4AAAAfj//gAAAD//wAAAB/j//wAAAD//wAAAD/j/////4D//wH////j/////8B//gP////j/////8B//gP////j/////8B//gP////j/////+A//Af////j/////+A//Af////j/////+A//Af////j//////Af+A/////j//////Af+A/////j//////Af+A/////j//////gP8B/////j//////gP8B/////j//////gP8B/////j//////wH4D/////j//////wDwD/////j//////wAAD/////j//////4AAH/////j//////8AAP/////j//////8AAP/////j///////AA//////j///////gB//////j///////8P//////j///////////////j///////////////g=",
+        "icon18": "data:image/bmp;base64,Qk1GBAAAAAAAAD4AAAAoAAAAXgAAAFYAAAABAAEAAAAAAAgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////////z///////////////z///////////////z///////////////z//8AAAAAAAAD///z//AAAAAAAAAAP//z/8AAAAAAAAAAD//z/4AAAAAAAAAAB//z/wP/////////A//z/g//////////wf/z/D//////////8P/z+H//////////+H/z+H//////////+H/z8P///////////D/z8f///////////j/z8f///////////j/z4f///////////h/z4f///////////h/z4////8A//////x/z4////4Af/////x/z4////wAP/////x/z4////g8H/////x/z4///+D/D/////x/z4///8H/h/////x/z4///4P/w/////x/z4///wf/4f////x/z4///g//8P////x/z4///B//+D////x/z4//+D///D////x/z4//8H///g////x/z4//4P///wf///x/z4//wf///4P///x/z4//w////8H///x/z4//x////+D///x/z4////////B///x/z4////////g///x/z4////////wf//x/z4////////4P//x/z4////////8H//x/z4////////+D//x/z4/////////B//x/z4/////////g//x/z4/////////w//x/z4/////////4//x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4AAAAAAAAAAAAB/z4AAAAAAAAAAAAB/z4AAAAAAAAAAAAB/z4AAAAAAAAAAAAB/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4////////////x/z4f///////////h/z4f///////////h/z8f///////////j/z8f///////////j/z8P///////////D/z+H//////////+H/z+H//////////+H/z/D//////////8P/z/g//////////wf/z/wP/////////A//z/4AAAAAAAAAAB//z/8AAAAAAAAAAD//z//AAAAAAAAAAP//z//+AAAAAAAAH///z///+P/////H////z///+P/////H////z///+P/////H////z///+P/////H////z///////////////z///////////////w=",
+        "icon19": "data:image/bmp;base64,Qk1SBAAAAAAAAD4AAAAoAAAARAAAAFcAAAABAAEAAAAAABQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///////////AAAAD/////4/////AAAAD/////gP////AAAAD/////AH////AAAAD////+AH////AAAAD////+PD////AAAAD////8Ph////AAAAD////8Ph////AAAAD////+Pw////AAAAD////+Pw////AAAAD////+H4f///AAAAD////+H8P///AAAAD/////H8P///AAAAD/////D+H///AAAAD/////D/H///AAAAD/////j/D///AAAAD/////j/h///AAAAD/////h/h///AAAAD/////x/w///AAAAD/////x/4f//AAAAD/////w/4f//AAAAD/////w/8P//AAAAD/////4/8P//AAAAD/////4f+H//AAAAD/////4f/D//AAAAD/////8f/D//AAAAD/////8f/h//AAAAD/////8P/w//AAAAD//wAAAP/w//AAAAD//AAAAP/4f/AAAAD/+AAAAP/4f/AAAAD/8H/////8P/AAAAD/4f/////+H/AAAAD/4f/////+H/AAAAD/4///////D/AAAAD/w///////h/AAAAD/w///////h/AAAAD/w///////w/AAAAD/4///////w/AAAAD/4///////4fAAAAD/4f//////8fAAAAD/4f//////8PAAAAD/8f//////8PAAAAD/8P//////8PAAAAD/8P//////8fAAAAD/+P//////8fAAAAD/+P//////4fAAAAD/+H//////g/AAAAD/+H///gAAA/AAAAD//H///gAAD/AAAAD//H///gAAH/AAAAD//D///h////AAAAD//D///x////AAAAD//j///x////AAAAD//j///w////AAAAD//h///4////AAAAD//x///4f///AAAAD//x///4f///AAAAD//w///8f///AAAAD//w///8P///AAAAD//4///8P///AAAAD//4///+P///AAAAD//4f//+H///AAAAD//8f//+H///AAAAD//8f///H///AAAAD//8f///D///AAAAD//8P///D///AAAAD//+P///j///AAAAD//+P///h///AAAAD//+H///x///AAAAD//+H///x///AAAAD///H///w///AAAAD///H///4///AAAAD///D///4///AAAAD///j///4///AAAAD///j///4///AAAAD///h///w///AAAAD///wf//g///AAAAD///4AAAB///AAAAD///8AAAD///AAAAD///+AAAH///AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAD///////////AAAAA="
+    };
+
+    let layers = [];
+    let layerIdCounter = 0;
+    let activeLayerId = null;
+
+    let canvas = document.getElementById('epd_canvas');
+    let ctx = canvas.getContext('2d');
+
+    const iconsMap = { text: '📝', line: '➖', bitmap: '🖼️', battery: '🔋', calendar: '📅' };
+
+    const LUNAR_INFO = [
+        0x04bd8, 0x04ae0, 0x0a570, 0x054d5, 0x0d260, 0x0d950, 0x16554, 0x056a0, 0x09ad0, 0x055d2,
+        0x04ae0, 0x0a5b6, 0x0a4d0, 0x0d250, 0x1d255, 0x0b540, 0x0d6a0, 0x0ada2, 0x095b0, 0x14977,
+        0x04970, 0x0a4b0, 0x0b4b5, 0x06a50, 0x06d40, 0x1ab54, 0x02b60, 0x09570, 0x052f2, 0x04970,
+        0x06566, 0x0d4a0, 0x0ea50, 0x06e95, 0x05ad0, 0x02b60, 0x186e3, 0x092e0, 0x1c8d7, 0x0c950,
+        0x0d4a0, 0x1d8a6, 0x0b550, 0x056a0, 0x1a5b4, 0x025d0, 0x092d0, 0x0d2b2, 0x0a950, 0x0b557,
+        0x06ca0
+    ];
+
+    let moveInterval = null;
+    let moveTimeout = null;
+    let holdCounter = 0;
+
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+        if(window.event) window.event.currentTarget.classList.add('active');
+        if (tabId === 'tab-simulation') setTimeout(renderAll, 50);
+    }
+
+    function changeScreenSize() {
+        let size = document.getElementById('screen_select').value.split('x');
+        canvas.width = parseInt(size[0]);
+        canvas.height = parseInt(size[1]);
+        canvas.style.width = "100%";
+        canvas.style.maxWidth = (canvas.width * 1.5) + "px";
+        renderAll();
+    }
+
+    function addObject(type) {
+        layerIdCounter++;
+        let defaultText = type === 'text' ? '@H:@M' : '';
+        let obj = {
+            id: layerIdCounter,
+            type: type,	
+            visible: true,
+            x: 8, y: (type === 'calendar') ? 20 : 15,
+            text: defaultText,
+            font_type: 'sfont',
+            dir: 'horizontal',
+            length: 50, thickness: 2,
+            width: 48, height: 48, 
+            lang: 0,
+            bitmapData: null, imgElement: null,
+            selectedIconKey: "" // Theo dõi icon đang được chọn
+        };
+        layers.push(obj);
+        selectLayer(obj.id);
+        renderAll();
+    }
+
+    function selectLayer(id) {
+        activeLayerId = id;
+        refreshIconsGrid();
+        
+        let obj = layers.find(l => l.id === id);
+        let ctrlCard = document.getElementById('global_control_card');
+        
+        if(!obj) {
+            ctrlCard.style.display = 'none';
+            return;
+        }
+        
+        ctrlCard.style.display = 'block';
+        document.getElementById('ctrl_title').innerText = `[${obj.type.toUpperCase()}] #${obj.id}`;
+        document.getElementById('ctrl_toggle_btn').innerText = obj.visible ? "Ẩn" : "Hiện";
+        document.getElementById('joy_coord').innerHTML = `X:${obj.x}<br>Y:${obj.y}`;
+        
+        let propsForm = document.getElementById('dynamic_props_form');
+        let html = '';
+        
+        if(obj.type === 'text') {
+            html = `
+                <div class="form-group">
+                    <label>Chuỗi văn bản</label>
+                    <input type="text" value="${obj.text}" oninput="updateActiveProp('text', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Cấu trúc Font</label>
+                    <select onchange="updateActiveProp('font_type', this.value)">
+                        <option value="sfont" ${obj.font_type==='sfont'?'selected':''}>T_font_1(Trung)</option>
+                        <option value="N_font_1" ${obj.font_type==='N_font_1'?'selected':''}>N_font_1</option>
+						<option value="N_font_2" ${obj.font_type==='N_font_2'?'selected':''}>N_font_2</option>
+						<option value="N_font_3" ${obj.font_type==='N_font_3'?'selected':''}>N_font_3</option>
+						<option value="N_font_4" ${obj.font_type==='N_font_4'?'selected':''}>N_font_4</option>
+						<option value="N_font_5" ${obj.font_type==='N_font_5'?'selected':''}>N_font_5</option>
+						<option value="N_font_6" ${obj.font_type==='N_font_6'?'selected':''}>N_font_6</option>
+						<option value="T_font_2" ${obj.font_type==='T_font_2'?'selected':''}>T_font_2(Viet)</option>
+						<option value="T_font_3" ${obj.font_type==='T_font_3'?'selected':''}>T_font_3(Viet)</option>
+						<option value="T_font_4" ${obj.font_type==='T_font_4'?'selected':''}>T_font_4(Viet)</option>
+                    </select>
+                </div>
+            `;
+        } else if(obj.type === 'line') {
+            html = `
+                <div class="form-group">
+                    <label>Hướng</label>
+                    <select onchange="updateActiveProp('dir', this.value)">
+                        <option value="horizontal" ${obj.dir==='horizontal'?'selected':''}>Ngang</option>
+                        <option value="vertical" ${obj.dir==='vertical'?'selected':''}>Dọc</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Dài(px)</label><input type="number" value="${obj.length}" oninput="updateActiveProp('length', this.value)"></div>
+                    <div class="form-group"><label>Dày(px)</label><input type="number" value="${obj.thickness}" oninput="updateActiveProp('thickness', this.value)"></div>
+                </div>
+            `;
+        } else if(obj.type === 'bitmap') {
+            let thumbsHtml = '';
+            Object.keys(MY_HARDCODED_ICONS).forEach(key => {
+                let isSelected = (obj.selectedIconKey === key) ? 'selected' : '';
+                thumbsHtml += `
+                    <div class="img-thumb-item ${isSelected}" data-key="${key}" onclick="handleSelectSavedIcon('${key}')" title="${key}">
+                        <img src="${MY_HARDCODED_ICONS[key]}" alt="${key}">
+                    </div>
+                `;
+            });
+
+            html = `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Rộng W: <span id="val_w">${obj.width}</span>px</label>
+                        <input type="range" min="1" max="300" value="${obj.width}" oninput="document.getElementById('val_w').innerText=this.value; updateActiveProp('width', this.value)">
+                    </div>
+                    <div class="form-group">
+                        <label>Cao H: <span id="val_h">${obj.height}</span>px</label>
+                        <input type="range" min="1" max="300" value="${obj.height}" oninput="document.getElementById('val_h').innerText=this.value; updateActiveProp('height', this.value)">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Chọn nhanh ảnh có sẵn</label>
+                    <div class="img-thumb-grid">
+                        ${thumbsHtml}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Duyệt file từ máy</label>
+                    <input type="file" accept="image/*" onchange="handleImgUploadTop(this.files[0])" style="font-size:11px; border:none; padding:0;">
+                </div>
+            `;
+        } else if(obj.type === 'calendar') {
+            html = `
+                <div class="form-group">
+                    <label>Ngôn ngữ tiêu đề tuần</label>
+                    <select onchange="updateActiveProp('lang', this.value)">
+                        <option value="0" ${obj.lang===0?'selected':''}>Tiếng Anh (S,M,T..)</option>
+                        <option value="1" ${obj.lang===1?'selected':''}>Tiếng Trung (日,一..)</option>
+                    </select>
+                </div>
+            `;
+        } else if(obj.type === 'battery') {
+            html = `<div style="font-size:11px; color:#64748b; text-align:center; padding-top:15px;">Mô phỏng cột pin cố định</div>`;
+        }
+        
+        propsForm.innerHTML = html;
+    }
+
+    function handleSelectSavedIcon(iconKey) {
+        if(!iconKey || !activeLayerId || !MY_HARDCODED_ICONS[iconKey]) return;
+        
+        let img = new Image();
+        img.onload = function() {
+            let obj = layers.find(l => l.id === activeLayerId);
+            if(obj) {
+                obj.imgElement = img;
+                obj.selectedIconKey = iconKey; 
+                if(obj.width <= 0 || obj.width === 48) obj.width = img.width;
+                if(obj.height <= 0 || obj.height === 48) obj.height = img.height;
+                processAndResizeImage(obj);
+                
+                let valW = document.getElementById('val_w');
+                let valH = document.getElementById('val_h');
+                if(valW) valW.innerText = obj.width;
+                if(valH) valH.innerText = obj.height;
+                
+                document.querySelectorAll('.img-thumb-item').forEach(item => {
+                    if(item.getAttribute('data-key') === iconKey) {
+                        item.classList.add('selected');
+                    } else {
+                        item.classList.remove('selected');
+                    }
+                });
+
+                renderAll();
+            }
+        };
+        img.src = MY_HARDCODED_ICONS[iconKey];
+    }
+
+    function refreshIconsGrid() {
+        let grid = document.getElementById('objects_icon_grid');
+        grid.innerHTML = '';
+        layers.forEach(obj => {
+            let btn = document.createElement('div');
+            btn.className = `object-icon-btn ${obj.id === activeLayerId ? 'active' : ''} ${!obj.visible ? 'hidden-layer' : ''}`;
+            btn.onclick = () => selectLayer(obj.id);
+            
+            let sym = iconsMap[obj.type] || '📦';
+            btn.innerHTML = `
+                <span class="badge-id">#${obj.id}</span>
+                <span class="status-dot"></span>
+                <span class="icon-sym">${sym}</span>
+                <span>${obj.type.toUpperCase()}</span>
+            `;
+            grid.appendChild(btn);
+        });
+    }
+
+    function moveActive(dx, dy) {
+        let obj = layers.find(l => l.id === activeLayerId);
+        if(!obj) return;
+
+        let step = 1;
+        if (holdCounter > 15) step = 5;
+        else if (holdCounter > 8) step = 3;
+        else if (holdCounter > 3) step = 2;
+
+        obj.x += dx * step;
+        obj.y += dy * step;
+        document.getElementById('joy_coord').innerHTML = `X:${obj.x}<br>Y:${obj.y}`;
+        renderAll();
+    }
+
+    let currentDx = 0, currentDy = 0;
+
+    function handleJoystickStart(e, dx, dy) {
+        e.preventDefault();
+        handleJoystickStop();
+
+        currentDx = dx;
+        currentDy = dy;
+        holdCounter = 0;
+
+        let obj = layers.find(l => l.id === activeLayerId);
+        if (obj) {
+            obj.x += currentDx;
+            obj.y += currentDy;
+            document.getElementById('joy_coord').innerHTML = `X:${obj.x}<br>Y:${obj.y}`;
+            renderAll();
+        }
+
+        moveTimeout = setTimeout(() => {
+            moveInterval = setInterval(() => {
+                holdCounter++;
+                moveActive(currentDx, currentDy);
+            }, 50);
+        }, 400);
+    }
+
+    function handleJoystickStop(e) {
+        if (e) e.preventDefault();
+        if (moveTimeout) { clearTimeout(moveTimeout); moveTimeout = null; }
+        if (moveInterval) { clearInterval(moveInterval); moveInterval = null; }
+        holdCounter = 0;
+    }
+
+    function setupJoystickEvents() {
+        const joyButtons = document.querySelectorAll('.joystick-grid .joy-btn');
+        
+        joyButtons.forEach(btn => {
+            let txt = btn.innerText;
+            let dx = 0, dy = 0;
+            
+            if (txt === '▲') { dx = 0; dy = -1; }
+            else if (txt === '▼') { dx = 0; dy = 1; }
+            else if (txt === '◄') { dx = -1; dy = 0; }
+            else if (txt === '►') { dx = 1; dy = 0; }
+            else return;
+
+            btn.removeAttribute('onclick');
+
+            btn.addEventListener('mousedown', (e) => handleJoystickStart(e, dx, dy));
+            btn.addEventListener('touchstart', (e) => handleJoystickStart(e, dx, dy), { passive: false });
+
+            btn.addEventListener('mouseup', handleJoystickStop);
+            btn.addEventListener('mouseleave', handleJoystickStop);
+            btn.addEventListener('touchend', handleJoystickStop, { passive: false });
+            btn.addEventListener('touchcancel', handleJoystickStop);
+        });
+    }
+	
+    function updateActiveProp(prop, value) {
+        let obj = layers.find(l => l.id === activeLayerId);
+        if(!obj) return;
+        if(['x', 'y', 'width', 'height', 'length', 'thickness', 'lang'].includes(prop)) {
+            obj[prop] = parseInt(value) || 0;
+        } else {
+            obj[prop] = value;
+        }
+        if((prop === 'width' || prop === 'height') && obj.imgElement) {
+            processAndResizeImage(obj);
+        }
+        renderAll();
+    }
+
+    function toggleActiveLayer() {
+        let obj = layers.find(l => l.id === activeLayerId);
+        if(obj) {
+            obj.visible = !obj.visible;
+            document.getElementById('ctrl_toggle_btn').innerText = obj.visible ? "Ẩn" : "Hiện";
+            refreshIconsGrid();
+            renderAll();
+        }
+    }
+
+    function deleteActiveLayer() {
+        if(!activeLayerId) return;
+        layers = layers.filter(l => l.id !== activeLayerId);
+        activeLayerId = layers.length > 0 ? layers[layers.length - 1].id : null;
+        selectLayer(activeLayerId);
+        renderAll();
+    }
+
+    function handleImgUploadTop(file) {
+        if(!file || !activeLayerId) return;
+        let img = new Image();
+        img.onload = function() {
+            let obj = layers.find(l => l.id === activeLayerId);
+            if(obj) {
+                obj.imgElement = img; 
+                obj.selectedIconKey = ""; 
+                if(obj.width <= 0) obj.width = img.width;
+                if(obj.height <= 0) obj.height = img.height;
+                processAndResizeImage(obj);
+                
+                let valW = document.getElementById('val_w');
+                let valH = document.getElementById('val_h');
+                if(valW) valW.innerText = obj.width;
+                if(valH) valH.innerText = obj.height;
+
+                selectLayer(activeLayerId); 
+                renderAll();
+            }
+        };
+        img.src = URL.createObjectURL(file);
+    }
+
+    function processAndResizeImage(obj) {
+        if(!obj.imgElement || !obj.width || !obj.height) return;
+        let tempCanvas = document.createElement('canvas');
+        let tempCtx = tempCanvas.getContext('2d');
+        tempCanvas.width = obj.width; tempCanvas.height = obj.height;
+        tempCtx.drawImage(obj.imgElement, 0, 0, obj.width, obj.height);
+        let imgData = tempCtx.getImageData(0, 0, obj.width, obj.height);
+        let bitArray = [];
+        for(let i=0; i<imgData.data.length; i+=4) {
+            let brightness = (imgData.data[i] + imgData.data[i+1] + imgData.data[i+2]) / 3;
+            bitArray.push(brightness < 128 ? 1 : 0);
+        }
+        obj.bitmapData = bitArray;
+    }
+
+    function get_first_wday_sun0(year, month) {
+        let q = 1; let m = month; let y = year;
+        if (m < 3) { m += 12; y--; }
+        let k = y % 100; let j = Math.floor(y / 100);
+        let h = (q + Math.floor((13 * (m + 1)) / 5) + k + Math.floor(k / 4) + Math.floor(j / 4) + 5 * j) % 7;
+        return (h + 6) % 7; 
+    }
+
+    function get_month_days(year, month) {
+        const mdays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        if (month === 2 && ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0)) return 29;
+        return mdays[month - 1];
+    }
+
+    function renderCalendarLayer(obj) {
+        const now = new Date(); const year = now.getFullYear(); const month = now.getMonth() + 1; const day = now.getDate();
+        let start_x = obj.x; let start_y = obj.y;
+        
+        // Kiểm tra xem đối tượng này có đang được chọn hay không để đổi màu vẽ
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        let calendar = Array(6).fill(0).map(() => Array(7).fill(0));
+        let first_wday = get_first_wday_sun0(year, month); let days = get_month_days(year, month);
+        let d = 1;
+        for (let i = 0; i < 6; i++) {
+            for (let j = 0; j < 7; j++) {
+                if (i === 0 && j < first_wday) continue;
+                if (d > days) break;
+                calendar[i][j] = d++;
+            }
+        }
+        let cell_w = 20; let cell_h = 13;
+        let total_w = 7 * cell_w; let header_h = 12;
+        ctx.fillStyle = drawColor; ctx.fillRect(start_x, start_y - header_h, total_w, header_h + 2);
+        let weeks = (obj.lang === 1) ? ["日", "一", "二", "三", "四", "五", "六"] : ["S", "M", "T", "W", "T", "F", "S"];
+        ctx.fillStyle = "#ffffff"; ctx.font = "9px monospace"; ctx.textBaseline = "top";
+        for (let j = 0; j < 7; j++) {
+            let text_offset = (cell_w - 6) / 2; if (obj.lang === 1) text_offset = (cell_w - 12) / 2; 
+            ctx.fillText(weeks[j], start_x + text_offset + j * cell_w, start_y - 11);
+        }
+        for (let i = 0; i < 6; i++) {
+            for (let j = 0; j < 7; j++) {
+                let date = calendar[i][j]; if (date === 0) continue;
+                let x = start_x + j * cell_w; let y = start_y + i * cell_h;
+                let buf = date.toString().padStart(2, '0'); let num_offset_x = (cell_w - 11) / 2; 
+                if (date === day) {
+                    ctx.fillStyle = drawColor; ctx.fillRect(x + 1, y + 1, cell_w - 2, cell_h); 
+                    ctx.fillStyle = "#ffffff"; ctx.fillText(buf, x + num_offset_x, y + 2);                                                                                                           
+                } else {
+                    ctx.fillStyle = drawColor; ctx.fillText(buf, x + num_offset_x, y + 2); 
+                }
+            }
+        }
+    }
+
+    function renderAll() {
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = "#ff0000"; ctx.strokeRect(0, 0, canvas.width, canvas.height);
+        for(let obj of layers) {
+            if(!obj.visible) continue;
+            if(obj.type === 'text') renderTextLayer(obj);
+            else if(obj.type === 'line') renderLineLayer(obj);
+            else if(obj.type === 'bitmap') renderBitmapLayer(obj);
+			else if(obj.type === 'battery') renderBatteryLayer(obj);
+			else if(obj.type === 'calendar') renderCalendarLayer(obj); 
+        }
+    }
+
+    function find_font(fontArray, ucs) {
+        if (!fontArray || fontArray.length < 2) return null;
+        const total = fontArray[0] | (fontArray[1] << 8);
+        for (let i = 0; i < total; i++) {
+            let idx = 2 + i * 4;
+            if (idx + 3 >= fontArray.length) break;
+            if ((fontArray[idx] | (fontArray[idx + 1] << 8)) === ucs) {
+                return fontArray[idx + 2] | (fontArray[idx + 3] << 8); 
+            }
+        }
+        return null;
+    }
+
+    function renderBatteryLayer(obj) {
+        // Kiểm tra xem đối tượng này có đang được chọn hay không để đổi màu vẽ
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        ctx.fillStyle = drawColor; ctx.strokeStyle = drawColor;
+        let p = 10; let x = obj.x; let y = obj.y;
+        ctx.strokeRect(x, y - 4, 14, 8);
+        ctx.fillRect(x - 2, y - 1, 2, 3);
+        ctx.fillRect(x + 12 - p, y - 2, p + 1, 5);
+    }
+
+    function renderTextLayer(obj) {
+        let textStr = obj.text || ""; let current_x = obj.x; let start_y = obj.y;
+        const now = new Date(); const currentHour = now.getHours(); const currentMin = now.getMinutes();
+        const currentYear = now.getFullYear(); const currentMonth = now.getMonth() + 1; const currentDay = now.getDate(); const currentWeekday = now.getDay();
+        const weekdayCN = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+		const weekdayEN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        
+        // Kiểm tra xem đối tượng này có đang được chọn hay không để đổi màu vẽ
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        function drawSingleChar(ucsCode) {
+            let fontArray = null; let offset = null;
+            if (obj.font_type === 'N_font_1' && typeof N_font_1 !== 'undefined') {
+                offset = find_font(N_font_1, ucsCode); if (offset !== null) fontArray = N_font_1;
+            }
+			if (obj.font_type === 'N_font_2' && typeof N_font_2 !== 'undefined') {
+                offset = find_font(N_font_2, ucsCode); if (offset !== null) fontArray = N_font_2;
+            }
+			 if (obj.font_type === 'N_font_3' && typeof N_font_3 !== 'undefined') {
+                offset = find_font(N_font_3, ucsCode); if (offset !== null) fontArray = N_font_3;
+            }
+			 if (obj.font_type === 'N_font_4' && typeof N_font_4 !== 'undefined') {
+                offset = find_font(N_font_4, ucsCode); if (offset !== null) fontArray = N_font_4;
+            }
+			 if (obj.font_type === 'N_font_5' && typeof N_font_5 !== 'undefined') {
+                offset = find_font(N_font_5, ucsCode); if (offset !== null) fontArray = N_font_5;
+            }
+			 if (obj.font_type === 'N_font_6' && typeof N_font_6 !== 'undefined') {
+                offset = find_font(N_font_6, ucsCode); if (offset !== null) fontArray = N_font_6;
+            }	
+			if (obj.font_type === 'T_font_2' && typeof T_font_2 !== 'undefined') {
+                offset = find_font(T_font_2, ucsCode); if (offset !== null) fontArray = T_font_2;
+            }
+			if (obj.font_type === 'T_font_3' && typeof T_font_3 !== 'undefined') {
+                offset = find_font(T_font_3, ucsCode); if (offset !== null) fontArray = T_font_3;
+            }
+			if (obj.font_type === 'T_font_4' && typeof T_font_4 !== 'undefined') {
+                offset = find_font(T_font_4, ucsCode); if (offset !== null) fontArray = T_font_4;
+            }			
+			
+            if (offset === null && typeof sfont !== 'undefined') {
+                offset = find_font(sfont, ucsCode); if (offset !== null) fontArray = sfont;
+            }
+            if (!fontArray || offset === null) { current_x += 8; return; }
+            let p = offset;
+            let ft_adv = fontArray[p + 0]; let ft_bw = fontArray[p + 1]; let ft_bh = fontArray[p + 2];
+            let ft_bx = (fontArray[p + 3] << 24) >> 24; let ft_by = (fontArray[p + 4] << 24) >> 24;
+            let ft_lsize = Math.floor((ft_bw + 7) / 8); p += 5;
+            let draw_x = current_x + ft_bx; let draw_y = start_y + ft_by;
+            
+            ctx.fillStyle = drawColor;
+            for (let r = 0; r < ft_bh; r++) {
+                for (let c = 0; c < ft_bw; c++) {
+                    if ((fontArray[p + (c >> 3)] & (0x80 >> (c % 8))) !== 0) {
+                        ctx.fillRect(draw_x + c, draw_y + r, 1, 1);
+                    }
+                }
+                p += ft_lsize;
+            }
+            current_x += ft_adv;
+        }
+
+        let i = 0;
+        while (i < textStr.length) {
+            if (textStr[i] === '@' && i + 1 < textStr.length) {
+                let nextChar = textStr[i + 1];
+                if (['H', 'M', 'y', 'm', 'd', 't', 'n','r','R'].includes(nextChar)) {
+                    if (nextChar === 'r') {
+                        let strCN = weekdayCN[currentWeekday]; for (let j = 0; j < strCN.length; j++) drawSingleChar(strCN.charCodeAt(j));
+                        i += 2; continue;
+                    }
+                    if (nextChar === 'R') {
+                        let strEN = weekdayEN[currentWeekday]; for (let j = 0; j < strEN.length; j++) drawSingleChar(strEN.charCodeAt(j));
+                        i += 2; continue;
+                    }
+                    let val = 0;
+                    if (nextChar === 'H') val = currentHour;
+                    else if (nextChar === 'M') val = currentMin;
+                    if (nextChar === 'y') {
+                        val = currentYear; 
+                        drawSingleChar(Math.floor(val / 1000).toString().charCodeAt(0));
+                        drawSingleChar(Math.floor((val % 1000) / 100).toString().charCodeAt(0));
+                        drawSingleChar(Math.floor((val % 100) / 10).toString().charCodeAt(0));
+                        drawSingleChar((val % 10).toString().charCodeAt(0));
+                        i += 2; continue;
+                    }
+                    else if (nextChar === 'm') val = currentMonth;
+                    else if (nextChar === 'd') val = currentDay;
+                    else if (nextChar === 't') val = getLunarInfo(now).month;
+                    else if (nextChar === 'n') val = getLunarInfo(now).date;
+                    
+                    drawSingleChar(Math.floor(val / 10).toString().charCodeAt(0));
+                    drawSingleChar((val % 10).toString().charCodeAt(0));
+                    i += 2; continue;
+                }
+            }
+            drawSingleChar(textStr.charCodeAt(i)); i++;
+        }
+    }
+
+    function renderLineLayer(obj) {
+        // Kiểm tra xem đối tượng này có đang được chọn hay không để đổi màu vẽ
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        ctx.fillStyle = drawColor;
+        let w = obj.dir === 'horizontal' ? obj.length : obj.thickness;
+        let h = obj.dir === 'horizontal' ? obj.thickness : obj.length;
+        ctx.fillRect(obj.x, obj.y, w, h);
+    }
+
+    function renderBitmapLayer(obj) {
+        if(!obj.bitmapData || obj.bitmapData.length === 0) return;
+
+        // Kiểm tra xem đối tượng này có đang được chọn hay không để đổi màu vẽ
+        let isSelected = (obj.id === activeLayerId);
+        let drawColor = isSelected ? "#0078d7" : "#000000";
+
+        ctx.fillStyle = drawColor; let idx = 0;
+        for(let r = 0; r < obj.height; r++) {
+            for(let c = 0; c < obj.width; c++) {
+                if(idx < obj.bitmapData.length && obj.bitmapData[idx] === 1) {
+                    ctx.fillRect(obj.x + c, obj.y + r, 1, 1);
+                }
+                idx++;
+            }
+        }
+    }
+
+    // ================= BLE CONTROL =================
+    const SERVICE_UUID = '18424398-7cbc-11e9-8f9e-2a86e4085a59';
+    const CHARACTERISTIC_UUID = '772ae377-b3d2-4f8e-4042-5481d1e0098c';
+    let device, server, service, characteristic;
+    let currentMode = 0; const modeNames = ["Thời gian", "Lịch", "Đếm countdown"];
+
+    const log = msg => {
+        const logElem = document.getElementById('log'); logElem.textContent += msg + '\n'; logElem.scrollTop = logElem.scrollHeight;
+    };
+    const clearLog = () => document.getElementById('log').textContent = '';
+
+    function disableAllButtons() {
+        document.getElementById('sendLayout').disabled = true; document.getElementById('sendTime').disabled = true;
+        document.getElementById('refresh').disabled = true; document.getElementById('disconnect').disabled = true;
+        document.getElementById('sendSave99').disabled = true;
+    }
+
+    function onDisconnected (event) { log(`❌ Thiết bị đã ngắt kết nối đột ngột.`); disableAllButtons(); }
+
+    document.getElementById('connect').onclick = async () => {
+        clearLog();
+        try {
+            log('⏳ Đang tìm kiếm thiết bị...');
+            device = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: "DLG-" }], optionalServices: [SERVICE_UUID, 'generic_access', 'generic_attribute']
+            });
+            device.addEventListener('gattserverdisconnected', onDisconnected);
+            server = await device.gatt.connect(); service = await server.getPrimaryService(SERVICE_UUID); characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+            document.getElementById('sendLayout').disabled = false; document.getElementById('sendTime').disabled = false;
+            document.getElementById('refresh').disabled = false; document.getElementById('disconnect').disabled = false; document.getElementById('sendSave99').disabled = false;
+            log('🎉 Mạch BLE đã ĐÃ KẾT NỒI & SẴN SÀNG!');
+        } catch (e) { log(`❌ Lỗi kết nối: ${e}`); }
+    };
+
+    document.getElementById('sendLayout').onclick = async () => {
+        if (!characteristic) return;
+        const exportLayers = layers.slice(0, 20); log(`📤 Đang gửi lần lượt từng gói đơn...`);
+        for (let i = 0; i < exportLayers.length; i++) {
+            const obj = exportLayers[i];
+            let typeCode = (obj.type === 'line') ? 0x02 : (obj.type === 'bitmap' ? 0x03 : (obj.type === 'battery' ? 0x04 : (obj.type === 'calendar' ? 0x05 : 0x01)));
+            let dynamicSize = 7; let textBytes = null;
+            if (typeCode === 0x01) { 
+                textBytes = new TextEncoder().encode(obj.text || ""); dynamicSize += 2 + textBytes.length; 
+            } else if (typeCode === 0x02) { dynamicSize += 4; }
+            else if (typeCode === 0x03) { 
+                let rawBmpData = obj.bitmapData ? packBitmapToBytesRowAligned(obj.bitmapData, obj.width, obj.height) : [];
+                dynamicSize += 6 + rawBmpData.length; obj.packedBmp = rawBmpData; 
+            }
+			else if (typeCode === 0x04 ) { dynamicSize = 7; }
+			else if (typeCode === 0x05) { dynamicSize = 8; }
+
+            const buffer = new ArrayBuffer(dynamicSize); const view = new DataView(buffer);
+            view.setUint8(0, 0x95); view.setUint8(1, i); view.setUint8(2, typeCode);               
+            view.setInt16(3, obj.x, true); view.setInt16(5, obj.y, true);            
+            if (typeCode === 0x01) {
+                let fontCode = 0; 
+                
+                if (obj.font_type && obj.font_type.startsWith('N_font_')) {
+                    fontCode = parseInt(obj.font_type.replace('N_font_', '')) || 0;
+                } 
+                else if (obj.font_type && obj.font_type.startsWith('T_font_')) {
+                    fontCode = (parseInt(obj.font_type.replace('T_font_', ''))+5) || 0
+                }
+                view.setUint8(7, fontCode); 
+                view.setUint8(8, textBytes.length);    
+                for (let j = 0; j < textBytes.length; j++) view.setUint8(9 + j, textBytes[j]);
+            }
+		   else if (typeCode === 0x02) {
+                view.setUint8(7, (obj.dir === 'vertical') ? 1 : 0); view.setUint16(8, obj.length || 0, true); view.setUint8(10, obj.thickness || 1);
+            } else if (typeCode === 0x03) {
+                view.setUint16(7, obj.width || 0, true); view.setUint16(9, obj.height || 0, true); view.setUint16(11, obj.packedBmp.length, true); 
+                for (let j = 0; j < obj.packedBmp.length; j++) view.setUint8(13 + j, obj.packedBmp[j]); 
+            } else if (typeCode === 0x05) { view.setUint8(7, obj.lang); }
+
+            try {
+                const uint8Buf = new Uint8Array(buffer); log(`..Gửi Object ID [${i}] (${uint8Buf.length} bytes)`);
+                const chunkSize = 136; 
+                for (let offsetChunk = 0; offsetChunk < uint8Buf.length; offsetChunk += chunkSize) {
+                    const chunk = uint8Buf.slice(offsetChunk, offsetChunk + chunkSize);
+                    await sendRawBuffer(chunk); await new Promise(resolve => setTimeout(resolve, 20)); 
+                }
+                await new Promise(resolve => setTimeout(resolve, 50)); 
+            } catch (e) { log(`❌ Lỗi gửi Object ${i}: ` + e); break; }
+        }
+        log('✅ Đồng bộ layout hoàn tất!');
+    };
+
+ function packBitmapToBytesRowAligned(bitArray, width, height) {
+    let bytes = []; let byteWidth = Math.ceil(width / 8); 
+    for (let r = 0; r < height; r++) {
+        for (let bWidth = 0; bWidth < byteWidth; bWidth++) {
+            let byteVal = 0;
+            for (let b = 0; b < 8; b++) {
+                let pInRow = (bWidth * 8) + b; let pIdx = (r * width) + pInRow;
+                let bit = (pInRow < width && pIdx < bitArray.length) ? bitArray[pIdx] : 1;
+                if (bit === 1) byteVal |= (0x80 >> b);
+            }
+            bytes.push(byteVal);
+        }
+    }
+    return bytes;
+}
+
+    document.getElementById('sendTime').onclick = async () => { if (!characteristic) return; await sendDateTime(new Date()); };
+
+    document.getElementById('sendSave99').onclick = async () => {
+        if (!characteristic) return;
+        currentMode = (currentMode + 1) % 3; 
+        const buffer = new Uint8Array([0x99, currentMode & 0xFF, (currentMode >> 8) & 0xFF]);
+        log(`📤 Gửi lệnh đổi Chế độ ${currentMode} (${modeNames[currentMode]})`);
+        try {
+            await sendRawBuffer(buffer); log(`✅ Đã chuyển chế độ thành công.`);
+        } catch (e) { log('❌ Chuyển chế độ thất bại: ' + e); currentMode = (currentMode - 1 + 3) % 3; }
+    };
+
+    document.getElementById('refresh').onclick = async () => {
+        if (!characteristic) return;
+        log('📤 Gửi lệnh làm mới màn hình: 0x98');
+        try { await sendRawBuffer(new Uint8Array([0x98])); log('✅ Gửi lệnh làm mới thành công.'); } catch (e) { log('❌ Thất bại: ' + e); }
+    };
+
+    document.getElementById('disconnect').onclick = () => { if (device && device.gatt.connected) device.gatt.disconnect(); disableAllButtons(); log('🔌 Đã ngắt kết nối chủ động.'); };
+
+    async function sendDateTime (date) {
+        const lunarInfo = getLunarInfo(date); const buffer = new Uint8Array(12);
+        buffer[0] = 0x91; buffer[1] = date.getFullYear() & 0xFF; buffer[2] = (date.getFullYear() >> 8) & 0xFF;
+        buffer[3] = date.getMonth(); buffer[4] = date.getDate(); buffer[5] = date.getHours(); buffer[6] = date.getMinutes(); buffer[7] = date.getSeconds();
+        buffer[8] = date.getDay(); buffer[9] = lunarInfo.year % 100; buffer[10] = lunarInfo.month; buffer[11] = lunarInfo.date;
+        log(`📤 Đồng bộ gói 12-bytes: Realtime & Lunar.`);
+        try { await sendRawBuffer(buffer); log('✅ Đồng bộ thời gian thực thành công!'); } catch (error) { log('❌ Lỗi: ' + error); }
+    }
+
+    async function sendRawBuffer(buffer) {
+		   await characteristic.writeValueWithResponse(buffer);
+    }
+
+    // ================= LUNAR CALENDAR CALCULATION =================
+    function getLunarYearDays(y) {
+        let sum = 348;
+        for (let i = 0x8000; i > 0x8; i >>= 1) {
+            sum += (LUNAR_INFO[y - 1900] & i) ? 1 : 0;
+        }
+        return sum + leapMonthDays(y);
+    }
+
+    function leapMonth(y) {
+        return LUNAR_INFO[y - 1900] & 0xf;
+    }
+
+    function leapMonthDays(y) {
+        if (leapMonth(y)) {
+            return (LUNAR_INFO[y - 1900] & 0x10000) ? 30 : 29;
+        }
+        return 0;
+    }
+
+    function monthDays(y, m) {
+        return (LUNAR_INFO[y - 1900] & (0x10000 >> m)) ? 30 : 29;
+    }
+
+    function getLunarInfo(date) {
+        let offset = Math.floor((date.getTime() - new Date(1900, 0, 31).getTime()) / 86400000);
+        let i, leap = 0, temp = 0;
+        for (i = 1900; i < 2050 && offset > 0; i++) {
+            temp = getLunarYearDays(i);
+            offset -= temp;
+        }
+        if (offset < 0) {
+            offset += temp;
+            i--;
+        }
+        let year = i;
+        leap = leapMonth(year);
+        let isLeap = false;
+        let month = 1;
+        for (month = 1; month < 13 && offset > 0; month++) {
+            if (leap > 0 && month === (leap + 1) && !isLeap) {
+                --month;
+                isLeap = true;
+                temp = leapMonthDays(year);
+            } else {
+                temp = monthDays(year, month);
+            }
+            if (isLeap && month === (leap + 1)) isLeap = false;
+            offset -= temp;
+        }
+        if (offset === 0 && leap > 0 && month === leap + 1) {
+            if (isLeap) {
+                isLeap = false;
+            } else {
+                isLeap = true;
+                --month;
+            }
+        }
+        if (offset < 0) {
+            offset += temp;
+            --month;
+        }
+        return {
+            year: year,
+            month: month,
+            date: offset + 1,
+            isLeap: isLeap
+        };
+    }
+
+    // ================= INITIALIZATION & STORAGE =================
+    function saveLayoutToBrowser() {
+        localStorage.setItem("eink_saved_layers", JSON.stringify(layers));
+        localStorage.setItem("eink_saved_screen", document.getElementById('screen_select').value);
+        log("💾 Đã lưu cấu trúc layout hiện tại vào Trình duyệt.");
+    }
+
+    function loadLayoutFromBrowser() {
+        let raw = localStorage.getItem("eink_saved_layers");
+        let scr = localStorage.getItem("eink_saved_screen");
+        if(raw) {
+            layers = JSON.parse(raw);
+            layers.forEach(obj => {
+                if(obj.selectedIconKey && MY_HARDCODED_ICONS[obj.selectedIconKey]) {
+                    let img = new Image();
+                    img.onload = () => { obj.imgElement = img; renderAll(); };
+                    img.src = MY_HARDCODED_ICONS[obj.selectedIconKey];
+                }
+            });
+            if(scr) {
+                document.getElementById('screen_select').value = scr;
+                changeScreenSize();
+            }
+            if(layers.length > 0) {
+                layerIdCounter = Math.max(...layers.map(l => l.id)) || 0;
+                selectLayer(layers[layers.length - 1].id);
+            } else {
+                activeLayerId = null;
+                selectLayer(null);
+            }
+            log("📂 Đã tải layout cũ từ Trình duyệt thành công!");
+            renderAll();
+        } else {
+            log("⚠️ Không có dữ liệu layout cũ nào được tìm thấy.");
+        }
+    }
+	    function readFileAsArrayBuffer(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+      });
+    }
+ function find_patten(target, patten) {
+      for (let i = 0; i <= target.length - patten.length; i++) {
+        let match = true;
+        for (let j = 0; j < patten.length; j++) {
+          if (target[i + j] !== patten[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) return i;
+      }
+      return -1;
+    }
+
+async function onUpdate() {
+      const upfirmButton = document.getElementById('upfirm-button');
+      const progressBar = document.getElementById('update_progress_bar');
+      const progressText = document.getElementById('update_progress_text');
+      const progressSpinner = document.getElementById('progress_spinner');
+      
+      upfirmButton.disabled = true;
+      upfirmButton.innerHTML = '⚡ Đang nâng cấp...';
+      
+      // Reset trạng thái hiển thị của thanh tiến trình
+      progressBar.className = "progress-bar-fill";
+      progressBar.style.width = "0%";
+      progressText.textContent = "0%";
+      progressSpinner.style.display = "inline-block";
+      
+      document.getElementById('progress-container').classList.remove('hidden');
+      
+      let firm_buf, firm_size;
+
+      try {
+        console.log('Đang mở tệp firmware');
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'Firm files', accept: { 'text/plain': ['.bin'] } }]
+        });
+        const file = await handle.getFile();
+        let abuf = await readFileAsArrayBuffer(file);
+        firm_buf = new Uint8Array(abuf);
+        firm_size = file.size;
+      } catch (err) {
+        console.log('文件读取失败:', err);
+        upfirmButton.innerHTML = 'Bắt đầu nạp OTA';
+        upfirmButton.disabled = false;
+        document.getElementById('progress-container').classList.add('hidden');
+        return;
+      }
+
+      let firm_magic = new Uint8Array([0x79, 0x13, 0xa5, 0xf9, 0x86, 0xec, 0x5a, 0x06]);
+      let pos = find_patten(firm_buf, firm_magic);
+      if (pos == -1) {
+        console.log('无效固件: 未找到版本号!');
+        upfirmButton.innerHTML = 'Bắt đầu nạp OTA';
+        upfirmButton.disabled = false;
+        document.getElementById('progress-container').classList.add('hidden');
+        return;
+      }
+
+      let firm_ver = firm_buf[pos + 9] * 256 + firm_buf[pos + 8];
+      let firm_crc = CRC32.buf(firm_buf);
+      console.log('固件版本:', firm_ver, '大小:', firm_size, 'CRC:', (firm_crc >>> 0).toString(16));
+
+      let buf = new Uint8Array(136);
+      let view = new DataView(buf.buffer);
+      buf[0] = 0xa0;
+      view.setUint16(2, firm_size, true);
+      await characteristic.writeValue(buf);
+
+      let sent = 0;
+      const totalSize = firm_size + 64;
+      
+      try {
+        for (let i = 0; i < totalSize; i += 256) {
+          buf.fill(0xff);
+          if (i === 0) {
+            view.setUint32(8, 0x00aa5170, true);
+            view.setUint32(12, firm_size, true);
+            view.setUint32(16, firm_crc, true);
+            view.setUint32(36, 0xa50f0000 + firm_ver, true);
+            buf[40] = 0;
+            buf[0] = 0xa2;
+            buf.set(firm_buf.slice(sent, sent + 64), 72);
+            await characteristic.writeValue(buf);
+            sent += 64;
+          } else {
+            buf[0] = 0xa2;
+            buf.set(firm_buf.slice(sent, sent + 128), 8);
+            await characteristic.writeValue(buf);
+            sent += 128;
+          }
+          buf[0] = 0xa3;
+          buf.set(firm_buf.slice(sent, sent + 128), 8);
+          await characteristic.writeValue(buf);
+          sent += 128;
+
+          // Cập nhật tiến trình nâng cấp
+          const progress = Math.min(Math.round(100 * sent / totalSize), 100);
+          progressBar.style.width = `${progress}%`;
+          progressText.textContent = `${progress}%`;
+          document.getElementById('update_progress').textContent = `Đã nạp: ${sent} / ${totalSize} bytes`;
+        }
+
+        buf[0] = 0xa4;
+        buf.fill(0, 1, 4);
+        await characteristic.writeValue(buf);
+        
+        // Cập nhật giao diện khi THÀNH CÔNG
+        progressBar.classList.add('success');
+        progressSpinner.style.display = "none";
+        document.getElementById('update_progress').textContent = `Cập nhật thành công! Đang khởi động lại...`;
+        upfirmButton.innerHTML = 'Bắt đầu nạp OTA';
+        upfirmButton.disabled = false;
+        console.log('Nâng cấp hoàn tất!');
+      } catch (err) {
+        // Cập nhật giao diện khi THẤT BẠI
+        progressBar.classList.add('error');
+        progressSpinner.style.display = "none";
+        document.getElementById('update_progress').textContent = `Lỗi truyền dữ liệu: ${err.message || err}`;
+        upfirmButton.innerHTML = 'Thử lại OTA';
+        upfirmButton.disabled = false;
+      }
+    }
+    window.onload = () => {
+        changeScreenSize();
+        setupJoystickEvents();
+        setInterval(() => {
+            let now = new Date();
+            let h = now.getHours().toString().padStart(2, '0');
+            let m = now.getMinutes().toString().padStart(2, '0');
+            let s = now.getSeconds().toString().padStart(2, '0');
+            document.getElementById('sysTime').innerText = `${h}:${m}:${s}`;
+            renderAll();
+        }, 1000);
+    };
+</script>
+</body>
+</html>

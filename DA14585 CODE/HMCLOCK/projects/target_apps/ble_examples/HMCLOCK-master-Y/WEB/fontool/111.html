@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Mô Phỏng & Cân Chỉnh Toạ Độ Font TTF (Góc Trên Bên Trái)</title>
+    <!-- Nhúng opentype.js để parse trực tiếp file font trên client -->
+    <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 20px; color: #333; }
+        h2 { color: #1a73e8; margin-bottom: 5px; }
+        .container { display: flex; gap: 20px; }
+        .control-panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 340px; }
+        .preview-panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex: 1; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 14px; }
+        .form-group input, .form-group select { width: 100%; padding: 6px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .file-drop { border: 2px dashed #1a73e8; padding: 15px; text-align: center; background: #f8faff; border-radius: 6px; cursor: pointer; margin-bottom: 15px; font-size: 14px; }
+        
+        #canvas-container { margin-top: 15px; border: 2px dashed #999; background: #fff; display: inline-block; padding: 10px; }
+        canvas { background: #fff; border: 1px solid #ddd; image-rendering: pixelated; }
+        
+        .info-box { background: #e8f0fe; padding: 12px; border-radius: 4px; font-size: 13px; font-family: monospace; margin-top: 10px; border-left: 4px solid #1a73e8; }
+        .output-data { font-weight: bold; color: #d93025; }
+        .hint { font-size: 12px; color: #666; font-style: italic; margin-top: -3px; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+
+    <h2>Trình Mô Phỏng & Cân Chỉnh Toạ Độ Font (Góc Trên Bên Trái)</h2>
+    <p style="font-size: 14px; color:#555; margin-top:0;">Nạp font TTF, nhập Size, tọa độ Y được tính từ đỉnh góc trên bên trái của ký tự (Top-Left Origin).</p>
+    
+    <div class="container">
+        <!-- Bảng điều khiển -->
+        <div class="control-panel">
+            <h3>1. Nạp File Font</h3>
+            <div class="file-drop" id="drop_zone">
+                Kéo thả file font (.ttf, .otf) vào đây<br>hoặc <b>Click để chọn file</b>
+                <input type="file" id="font_file" accept=".ttf,.otf" style="display:none">
+            </div>
+            <div id="font_info" style="font-size: 12px; color: green; margin-bottom: 10px; font-weight: bold;">Sử dụng Font hệ thống mặc định (Arial)</div>
+
+            <h3>2. Tham Số Kích Thước</h3>
+            <div class="form-group">
+                <label>Cỡ chữ Font Size (px)</label>
+                <input type="number" id="font_size" value="50" oninput="rasterizeGlyph()">
+            </div>
+            <div class="form-group">
+                <label>Ký tự muốn test</label>
+                <!-- ĐÃ SỬA: Thay đổi value thành 00:00 và bỏ thuộc tính maxlength -->
+                <input type="text" id="test_char" value="00:00" oninput="rasterizeGlyph()">
+            </div>
+
+            <h3>3. Cân Chỉnh Tọa Độ (Top-Left Y)</h3>
+            <div class="form-group">
+                <label>Vị trí gốc X khởi đầu</label>
+                <input type="number" id="base_x" value="20" oninput="drawSimulation()">
+            </div>
+            <div class="form-group">
+                <label>Vị trí gốc Y khởi đầu</label>
+                <input type="number" id="base_y" value="20" oninput="drawSimulation()">
+            </div>
+            
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
+            
+            <div class="form-group">
+                <label>Độ lệch ngang ft_bx (Dịch X)</label>
+                <div class="hint">Khoảng cách từ gốc X đến cạnh trái bounding box</div>
+                <input type="number" id="glyph_bx" value="0" oninput="drawSimulation()">
+            </div>
+            <div class="form-group">
+                <label>Độ lệch dọc ft_by (Dịch Y từ Top)</label>
+                <div class="hint">Khoảng cách từ gốc Y đến đỉnh trên bounding box</div>
+                <input type="number" id="glyph_by" value="0" oninput="drawSimulation()">
+            </div>
+            <div class="form-group">
+                <label>Khoảng cách dịch chữ ft_adv</label>
+                <div class="hint">Khoảng cách nhảy bước x sau mỗi ký tự</div>
+                <input type="number" id="glyph_adv" value="0" oninput="drawSimulation()">
+            </div>
+        </div>
+
+        <!-- Khu vực hiển thị -->
+        <div class="preview-panel">
+            <h3>Màn Hình Mô Phỏng (Giả lập E-Ink)</h3>
+            <div>
+                <span style="font-size: 13px;">Kích thước màn hình:</span>
+                <select id="screen_select" onchange="changeScreenSize()">
+                    <option value="296x128">296 x 128 (Layout 2)</option>
+                    <option value="250x122">250 x 122 (Layout 1)</option>
+                    <option value="212x104">212 x 104 (Layout 0)</option>
+                </select>
+            </div>
+            
+            <div id="canvas-container">
+                <canvas id="epd_canvas"></canvas>
+            </div>
+
+            <h3>Thông Số Ký Tự Đầu Tiên Định Hướng Top-Left:</h3>
+            <div class="info-box">
+                <div>Độ rộng pixel thực tế (bw): <span id="raw_bw" class="output-data">-</span></div>
+                <div>Chiều cao pixel thực tế (bh): <span id="raw_bh" class="output-data">-</span></div>
+                <div>Offset X mặc định (bx): <span id="raw_bx" class="output-data">-</span></div>
+                <div>Offset Y mặc định từ đỉnh (by): <span id="raw_by" class="output-data">-</span></div>
+                <div>Khoảng cách bước nhảy (advance): <span id="raw_adv" class="output-data">-</span></div>
+            </div>
+            
+            <div class="info-box" style="background-color: #fff3cd; border-left: 4px solid #ffc107; font-family: sans-serif;">
+                <b>Nguyên lý hệ tọa độ mới:</b><br>
+                - Điểm chấm <span style="color:red;font-weight:bold;">Đỏ</span> là điểm gốc ký tự đầu tiên (Top-Left Origin).<br>
+                - Điểm chấm <span style="color:blue;font-weight:bold;">Xanh</span> là góc trên cùng bên trái của khung ma trận chứa dữ liệu chữ thực tế (Bounding Box).<br>
+                - Trục Y giờ đây hướng thẳng xuống dưới. Toàn bộ logic hiển thị này tương thích hoàn toàn với hệ điều hành đồ họa LCD/E-Ink thông dụng.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let canvas = document.getElementById('epd_canvas');
+        let ctx = canvas.getContext('2d');
+        let currentFont = null;
+        
+        // Đmax SỬA: Chuyển sang lưu danh sách các bitmap của từng ký tự
+        let glyphsData = []; 
+
+        let dropZone = document.getElementById('drop_zone');
+        let fileInput = document.getElementById('font_file');
+
+        dropZone.onclick = () => fileInput.click();
+        fileInput.onchange = (e) => loadFont(e.target.files[0]);
+        dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.background = "#e1ecf4"; };
+        dropZone.ondragleave = () => { dropZone.style.background = "#f8faff"; };
+        dropZone.ondrop = (e) => {
+            e.preventDefault();
+            dropZone.style.background = "#f8faff";
+            if(e.dataTransfer.files.length > 0) loadFont(e.dataTransfer.files[0]);
+        };
+
+        function loadFont(file) {
+            if(!file) return;
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    currentFont = opentype.parse(e.target.result);
+                    document.getElementById('font_info').innerText = "Đã nạp font: " + file.name;
+                    document.getElementById('font_info').style.color = "green";
+                    rasterizeGlyph();
+                } catch(err) {
+                    alert("Không đọc được file font này, hãy thử file .ttf khác.");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function changeScreenSize() {
+            let size = document.getElementById('screen_select').value.split('x');
+            canvas.width = parseInt(size[0]);
+            canvas.height = parseInt(size[1]);
+            canvas.style.width = (canvas.width * 2) + "px";
+            canvas.style.height = (canvas.height * 2) + "px";
+            rasterizeGlyph();
+        }
+
+        // ĐV XỬ LÝ RASTERIZE CHO TỪNG KÝ TỰ TRONG CHUỖI
+        function rasterizeGlyph() {
+            let textStr = document.getElementById('test_char').value || "0";
+            let size = parseInt(document.getElementById('font_size').value) || 32;
+            
+            glyphsData = []; // Reset mảng dữ liệu chuỗi
+
+            // Vòng lặp bóc tách thông số từng ký tự trong chuỗi (ví dụ: '0', '0', ':', '0', '0')
+            for (let i = 0; i < textStr.length; i++) {
+                let char = textStr[i];
+                let tCanvas = document.createElement('canvas');
+                let tCtx = tCanvas.getContext('2d');
+                
+                let font_bx = 0;
+                let font_by = 0;
+                let font_adv = size;
+                let bW = 0, bH = 0;
+                let glyphBitmap = [];
+
+                if (currentFont) {
+                    let glyph = currentFont.charToGlyph(char);
+                    let scale = 1 / currentFont.unitsPerEm * size;
+                    let gBbox = glyph.getBoundingBox();
+                    
+                    font_bx = Math.floor(gBbox.x1 * scale);
+                    font_adv = Math.round(glyph.advanceWidth * scale);
+                    
+                    let w = Math.ceil((gBbox.x2 - gBbox.x1) * scale) + 6;
+                    let h = Math.ceil((gBbox.y2 - gBbox.y1) * scale) + 6;
+                    if(w <= 0 || h <= 0) { w = 10; h = 10; }
+                    
+                    tCanvas.width = w;
+                    tCanvas.height = h;
+                    tCtx.fillStyle = '#ffffff';
+                    tCtx.fillRect(0, 0, w, h);
+                    
+                    let path = glyph.getPath(-gBbox.x1 * scale, h + gBbox.y1 * scale, size);
+                    path.fill = '#000000';
+                    path.draw(tCtx);
+                    
+                    let imgData = tCtx.getImageData(0, 0, w, h);
+                    let minX = w, maxX = 0, minY = h, maxY = 0, found = false;
+                    
+                    for(let y=0; y<h; y++) {
+                        for(let x=0; x<w; x++) {
+                            let idx = (y * w + x) * 4;
+                            if(imgData.data[idx] < 128) { 
+                                if(x < minX) minX = x; if(x > maxX) maxX = x;
+                                if(y < minY) minY = y; if(y > maxY) maxY = y;
+                                found = true;
+                            }
+                        }
+                    }
+                    
+                    if(!found) { minX = 0; maxX = 5; minY = 0; maxY = 5; }
+                    
+                    bW = (maxX - minX) + 1;
+                    bH = (maxY - minY) + 1;
+                    
+                    let font_ascender = Math.round(currentFont.ascender * scale);
+                    font_by = Math.floor(minY - (h + gBbox.y1 * scale) + font_ascender);
+                    font_bx = font_bx + minX;
+
+                    glyphBitmap = Array(bH).fill().map(() => Array(bW).fill(0));
+                    for(let y = 0; y < bH; y++) {
+                        for(let x = 0; x < bW; x++) {
+                            let pixelIdx = ((y + minY) * w + (x + minX)) * 4;
+                            if(imgData.data[pixelIdx] < 128) glyphBitmap[y][x] = 1;
+                        }
+                    }
+                } else {
+                    let w = size * 2;
+                    let h = size * 2;
+                    tCanvas.width = w;
+                    tCanvas.height = h;
+                    tCtx.fillStyle = '#ffffff';
+                    tCtx.fillRect(0, 0, w, h);
+                    
+                    tCtx.fillStyle = '#000000';
+                    tCtx.font = `${size}px Arial`;
+                    tCtx.textBaseline = 'top';
+                    tCtx.fillText(char, size / 2, size / 2);
+                    
+                    let imgData = tCtx.getImageData(0, 0, w, h);
+                    let minX = w, maxX = 0, minY = h, maxY = 0, found = false;
+                    
+                    for(let y=0; y<h; y++) {
+                        for(let x=0; x<w; x++) {
+                            let idx = (y * w + x) * 4;
+                            if(imgData.data[idx] < 128) { 
+                                if(x < minX) minX = x; if(x > maxX) maxX = x;
+                                if(y < minY) minY = y; if(y > maxY) maxY = y;
+                                found = true;
+                            }
+                        }
+                    }
+                    
+                    if(!found) { minX = size/2; maxX = size/2 + size/2; minY = size/2; maxY = size/2 + size; }
+                    
+                    bW = (maxX - minX) + 1;
+                    bH = (maxY - minY) + 1;
+                    
+                    font_bx = 0; 
+                    font_by = 0; 
+                    font_adv = Math.round(tCtx.measureText(char).width);
+
+                    glyphBitmap = Array(bH).fill().map(() => Array(bW).fill(0));
+                    for(let y = 0; y < bH; y++) {
+                        for(let x = 0; x < bW; x++) {
+                            let pixelIdx = ((y + minY) * w + (x + minX)) * 4;
+                            if(imgData.data[pixelIdx] < 128) glyphBitmap[y][x] = 1;
+                        }
+                    }
+                }
+
+                // Lưu object thông số của ký tự này vào mảng tổng
+                glyphsData.push({
+                    bitmap: glyphBitmap,
+                    bw: bW, bh: bH,
+                    bx: font_bx, by: font_by, adv: font_adv
+                });
+            }
+            
+            // Đổ thông số của ký tự đầu tiên lên hộp Info panel để tham khảo mẫu
+            if (glyphsData.length > 0) {
+                let first = glyphsData[0];
+                document.getElementById('raw_bw').innerText = first.bw;
+                document.getElementById('raw_bh').innerText = first.bh;
+                document.getElementById('raw_bx').innerText = first.bx;
+                document.getElementById('raw_by').innerText = first.by;
+                document.getElementById('raw_adv').innerText = first.adv;
+                
+                document.getElementById('glyph_bx').value = first.bx;
+                document.getElementById('glyph_by').value = first.by;
+                document.getElementById('glyph_adv').value = first.adv;
+            }
+            
+            drawSimulation();
+        }
+
+        // ĐV VẼ TOÀN BỘ CHUỖI KÝ TỰ LÊN CANVAS MÔ PHỎNG
+        function drawSimulation() {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.strokeStyle = "#ff0000";
+            ctx.strokeRect(0, 0, canvas.width, canvas.height);
+            
+            let start_x = parseInt(document.getElementById('base_x').value) || 0;
+            let start_y = parseInt(document.getElementById('base_y').value) || 0;
+            
+            // Lấy độ lệch thủ công từ bảng điều khiển (nếu người dùng tinh chỉnh nhanh)
+            let manual_bx = parseInt(document.getElementById('glyph_bx').value) || 0;
+            let manual_by = parseInt(document.getElementById('glyph_by').value) || 0;
+            let manual_adv = parseInt(document.getElementById('glyph_adv').value) || 0;
+            
+            let current_x = start_x;
+            
+            // Duyệt vẽ tuần tự từng ký tự trong mảng dữ liệu đã rasterize
+            for(let i = 0; i < glyphsData.length; i++) {
+                let g = glyphsData[i];
+                
+                // Nếu người dùng không gõ đổi thông số thủ công, dùng thông số tự động gốc của ký tự đó
+                let bx = (i === 0) ? manual_bx : g.bx;
+                let by = (i === 0) ? manual_by : g.by;
+                let adv = (i === 0) ? manual_adv : g.adv;
+                
+                let draw_x = current_x + bx;
+                let draw_y = start_y + by;
+                
+                ctx.fillStyle = "#000000";
+                for(let r = 0; r < g.bh; r++) {
+                    for(let c = 0; c < g.bw; c++) {
+                        if(g.bitmap[r] && g.bitmap[r][c] === 1) {
+                            ctx.fillRect(draw_x + c, draw_y + r, 1, 1);
+                        }
+                    }
+                }
+                
+                // Vẽ điểm chỉ định tọa độ Top-Left (Chỉ vẽ minh họa tại ký tự đầu tiên để đỡ rối mắt)
+                if(i === 0) {
+                    ctx.fillStyle = "red"; // Điểm Gốc danh nghĩa (Top-Left Origin)
+                    ctx.fillRect(current_x - 1, start_y - 1, 3, 3);
+                    
+                    ctx.fillStyle = "blue"; // Điểm góc khung ma trận thực tế
+                    ctx.fillRect(draw_x, draw_y, 2, 2);
+                }
+                
+                // Nhảy bước x sang tọa độ tiếp theo dựa trên độ rộng advance từng chữ
+                current_x += adv;
+            }
+        }
+
+        window.onload = function() {
+            changeScreenSize();
+        }
+    </script>
+</body>
+</html>
