@@ -1,0 +1,6 @@
+1.build project and copy file bin and renamed to firmware.bin into this foleder
+2.firmware_version.h no need change
+3.firm256kb.bin is out ouput file after meger font and fw and boot header -> flash to MCU 
+
+
+- this fw have ota >>> ota is load file firmware.bin at step 1
